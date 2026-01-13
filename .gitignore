@@ -9,5 +9,4 @@ venv/
 .env
 .claude
 result/
-tmp/
 .git_push.sh
