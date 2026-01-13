@@ -86,13 +86,21 @@ def compute_global_stats(times, values, masks):
     Compute global statistics (mean, max, min, std, slope) for each temporal feature.
 
     Args:
-        times: array of time points (T,)
-        values: array of feature values (T, F) where F is number of features
-        masks: array of masks (T, F)
+        times: list or array of time points (T,)
+        values: list of lists or array (T, F) where F is number of features
+        masks: list of lists or array (T, F)
 
     Returns:
         Array of shape (F * 5,) containing [mean, max, min, std, slope] for each feature
     """
+    # Convert to numpy arrays if they're lists
+    if isinstance(times, list):
+        times = np.array(times)
+    if isinstance(values, list):
+        values = np.array(values)
+    if isinstance(masks, list):
+        masks = np.array(masks)
+
     num_features = values.shape[1]
     global_stats = []
 
