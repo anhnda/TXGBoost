@@ -4,10 +4,10 @@ vs
 STRONG BASELINE: [Last Value + Static Context] -> XGBoost
 
 Key Enhancement in v2:
-- Adds global statistical features (mean, max, min, std, slope) for each temporal feature
-- These global stats (125 dims = 25 temporal features × 5 stats) are concatenated with static features
+- Adds global statistical features (mean, max, min, std, slope, count) for each temporal feature
+- These global stats (150 dims = 25 temporal features × 6 stats) are concatenated with static features
 - Enhanced information encoding for the RNN learning process
-- Final feature concatenation remains: [Last Values + Enhanced Static + RNN Embedding]
+- Final feature concatenation: [Last Values + Enhanced Static + RNN Embedding]
 
 Features:
 - Global Temporal Statistics (NEW!)
@@ -83,7 +83,7 @@ FIXED_FEATURES = [
 
 def compute_global_stats(times, values, masks):
     """
-    Compute global statistics (mean, max, min, std, slope) for each temporal feature.
+    Compute global statistics (mean, max, min, std, slope, count) for each temporal feature.
 
     Args:
         times: list or array of time points (T,)
@@ -91,7 +91,7 @@ def compute_global_stats(times, values, masks):
         masks: list of lists or array (T, F)
 
     Returns:
-        Array of shape (F * 5,) containing [mean, max, min, std, slope] for each feature
+        Array of shape (F * 6,) containing [mean, max, min, std, slope, count] for each feature
     """
     # Convert to numpy arrays if they're lists
     if isinstance(times, list):
@@ -125,13 +125,14 @@ def compute_global_stats(times, values, masks):
             # Std
             std_val = np.std(valid_vals) if len(valid_vals) > 1 else 0.0
 
-            # Slope (linear regression)
-            if len(valid_vals) > 1:
-                # Fit y = ax + b
-                A = np.vstack([valid_times, np.ones(len(valid_times))]).T
-                slope_val, _ = np.linalg.lstsq(A, valid_vals, rcond=None)[0]
+            # Slope (simpler: change over time)
+            if len(valid_vals) >= 2:
+                slope_val = (valid_vals[-1] - valid_vals[0]) / (valid_times[-1] - valid_times[0] + 1e-6)
             else:
                 slope_val = 0.0
+
+            # Count
+            count_val = float(len(valid_vals))
         else:
             # No valid values - use zeros
             mean_val = 0.0
@@ -139,8 +140,9 @@ def compute_global_stats(times, values, masks):
             min_val = 0.0
             std_val = 0.0
             slope_val = 0.0
+            count_val = 0.0
 
-        global_stats.extend([mean_val, max_val, min_val, std_val, slope_val])
+        global_stats.extend([mean_val, max_val, min_val, std_val, slope_val, count_val])
 
     return np.array(global_stats, dtype=np.float32)
 
@@ -212,7 +214,7 @@ class EnhancedHybridDataset(Dataset):
     def __init__(self, patients, feature_names, static_encoder, normalization_stats=None):
         self.data = []
         self.labels = []
-        self.static_data = []  # Will now include: [original static (23) + global stats (125)]
+        self.static_data = []  # Will now include: [original static (23) + global stats (150)]
         self.feature_names = feature_names
 
         all_values = []
@@ -226,10 +228,10 @@ class EnhancedHybridDataset(Dataset):
             # Encode Static Features (23 dims)
             s_vec = static_encoder.transform(patient)
 
-            # Compute Global Stats (125 dims = 25 features × 5 stats)
+            # Compute Global Stats (150 dims = 25 features × 6 stats)
             global_stats = compute_global_stats(times, values, masks)
 
-            # Concatenate: [Static (23) + Global Stats (125)] = 148 dims
+            # Concatenate: [Static (23) + Global Stats (150)] = 173 dims
             enhanced_static = np.concatenate([s_vec, global_stats])
 
             self.static_data.append(torch.tensor(enhanced_static, dtype=torch.float32))
@@ -310,8 +312,8 @@ class RNNFeatureExtractor(nn.Module):
 
 def train_rnn_extractor(model, train_loader, val_loader, criterion, optimizer, epochs=50):
     rnn_dim = model.rnn_cell.hidden_dim
-    # Enhanced static dim: 23 (original) + 125 (global stats) = 148
-    static_dim = len(FIXED_FEATURES) + (len(train_loader.dataset.feature_names) * 5)
+    # Enhanced static dim: 23 (original) + 150 (global stats) = 173
+    static_dim = len(FIXED_FEATURES) + (len(train_loader.dataset.feature_names) * 6)
 
     # Pre-train using [RNN + Enhanced Static] -> Gated Head
     temp_head = GatedDecisionHead(input_dim=rnn_dim + static_dim).to(DEVICE)
@@ -372,7 +374,7 @@ def train_rnn_extractor(model, train_loader, val_loader, criterion, optimizer, e
 # ==============================================================================
 
 def get_triple_features(model, loader):
-    """Returns [Last_Value (25) + Enhanced_Static (148) + RNN_Embedding (128)] = 301 dims"""
+    """Returns [Last_Value (25) + Enhanced_Static (173) + RNN_Embedding (128)] = 326 dims"""
     model.eval()
     features = []
     labels_out = []
@@ -382,7 +384,7 @@ def get_triple_features(model, loader):
             # 1. Get RNN Embedding (128 dims)
             h = model(t_data).cpu().numpy()
 
-            # 2. Get Enhanced Static Features (148 dims = 23 original + 125 global stats)
+            # 2. Get Enhanced Static Features (173 dims = 23 original + 150 global stats)
             s = s_data.numpy()
 
             # 3. Extract "Last Values" manually (25 dims)
@@ -432,8 +434,8 @@ def main():
 
     print(f"Input: {len(temporal_feats)} Temporal Features")
     print(f"       {len(FIXED_FEATURES)} Static Features")
-    print(f"       {len(temporal_feats) * 5} Global Stats (mean/max/min/std/slope)")
-    print(f"       Total Enhanced Static: {len(FIXED_FEATURES) + len(temporal_feats) * 5} dims")
+    print(f"       {len(temporal_feats) * 6} Global Stats (mean/max/min/std/slope/count)")
+    print(f"       Total Enhanced Static: {len(FIXED_FEATURES) + len(temporal_feats) * 6} dims")
 
     # Store metrics for Hybrid
     metrics_hybrid = {k: [] for k in ['auc', 'acc', 'spec', 'prec', 'rec', 'auc_pr']}
@@ -468,7 +470,7 @@ def main():
         X_val, y_val = get_triple_features(rnn, val_loader)
         X_test, y_test = get_triple_features(rnn, test_loader)
 
-        print(f"    Feature dimensions: {X_train.shape[1]} (25 Last + 148 Enhanced Static + 128 RNN)")
+        print(f"    Feature dimensions: {X_train.shape[1]} (25 Last + 173 Enhanced Static + 128 RNN)")
 
         # 4. Stage 3: XGBoost Training
         ratio = np.sum(y_train==0) / (np.sum(y_train==1) + 1e-6)

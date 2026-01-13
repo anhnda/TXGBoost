@@ -4,18 +4,18 @@ vs
 STRONG BASELINE: [Last Value + Static Context] -> XGBoost
 
 Key Enhancement in v1:
-- Adds global statistical features (mean, max, min, std, slope) for each temporal feature
-- These global stats (125 dims = 25 temporal features × 5 stats) enhance RNN training
+- Adds global statistical features (mean, max, min, std, slope, count) for each temporal feature
+- These global stats (150 dims = 25 temporal features × 6 stats) enhance RNN training
 - Global stats are used ONLY for RNN learning, NOT for final XGBoost input
 - Final XGBoost input: [Last Values (25) + Original Static (23) + RNN Embedding (128)] = 176 dims
 
 Difference from v2:
-- v2: XGBoost uses [Last + Enhanced Static (148) + RNN] = 301 dims
+- v2: XGBoost uses [Last + Enhanced Static (173) + RNN] = 326 dims
 - v1: XGBoost uses [Last + Original Static (23) + RNN] = 176 dims
 - v1: Global stats help RNN learn better but are not directly fed to XGBoost
 
 Features:
-- Global Temporal Statistics for RNN Training (NEW!)
+- Global Temporal Statistics for RNN Training (6 stats: mean, max, min, std, slope, count)
 - Categorical Encoding (for Gender/Race)
 - Gated RNN Pre-training with Enhanced Context
 - Triple Feature Concatenation (Original Features)
@@ -88,7 +88,7 @@ FIXED_FEATURES = [
 
 def compute_global_stats(times, values, masks):
     """
-    Compute global statistics (mean, max, min, std, slope) for each temporal feature.
+    Compute global statistics (mean, max, min, std, slope, count) for each temporal feature.
 
     Args:
         times: list or array of time points (T,)
@@ -96,7 +96,7 @@ def compute_global_stats(times, values, masks):
         masks: list of lists or array (T, F)
 
     Returns:
-        Array of shape (F * 5,) containing [mean, max, min, std, slope] for each feature
+        Array of shape (F * 6,) containing [mean, max, min, std, slope, count] for each feature
     """
     # Convert to numpy arrays if they're lists
     if isinstance(times, list):
@@ -130,13 +130,14 @@ def compute_global_stats(times, values, masks):
             # Std
             std_val = np.std(valid_vals) if len(valid_vals) > 1 else 0.0
 
-            # Slope (linear regression)
-            if len(valid_vals) > 1:
-                # Fit y = ax + b
-                A = np.vstack([valid_times, np.ones(len(valid_times))]).T
-                slope_val, _ = np.linalg.lstsq(A, valid_vals, rcond=None)[0]
+            # Slope (simpler: change over time)
+            if len(valid_vals) >= 2:
+                slope_val = (valid_vals[-1] - valid_vals[0]) / (valid_times[-1] - valid_times[0] + 1e-6)
             else:
                 slope_val = 0.0
+
+            # Count
+            count_val = float(len(valid_vals))
         else:
             # No valid values - use zeros
             mean_val = 0.0
@@ -144,8 +145,9 @@ def compute_global_stats(times, values, masks):
             min_val = 0.0
             std_val = 0.0
             slope_val = 0.0
+            count_val = 0.0
 
-        global_stats.extend([mean_val, max_val, min_val, std_val, slope_val])
+        global_stats.extend([mean_val, max_val, min_val, std_val, slope_val, count_val])
 
     return np.array(global_stats, dtype=np.float32)
 
@@ -223,7 +225,7 @@ class EnhancedHybridDatasetV1(Dataset):
         self.data = []
         self.labels = []
         self.original_static_data = []  # Original static (23 dims)
-        self.enhanced_static_data = []  # Enhanced static (148 dims = 23 + 125)
+        self.enhanced_static_data = []  # Enhanced static (173 dims = 23 + 150)
         self.feature_names = feature_names
 
         all_values = []
@@ -237,7 +239,7 @@ class EnhancedHybridDatasetV1(Dataset):
             # Encode Static Features (23 dims)
             s_vec = static_encoder.transform(patient)
 
-            # Compute Global Stats (125 dims = 25 features × 5 stats)
+            # Compute Global Stats (150 dims = 25 features × 6 stats)
             global_stats = compute_global_stats(times, values, masks)
 
             # Store both original and enhanced static
@@ -327,8 +329,8 @@ class RNNFeatureExtractor(nn.Module):
 
 def train_rnn_extractor(model, train_loader, val_loader, criterion, optimizer, epochs=50):
     rnn_dim = model.rnn_cell.hidden_dim
-    # Enhanced static dim: 23 (original) + 125 (global stats) = 148
-    static_dim = len(FIXED_FEATURES) + (len(train_loader.dataset.feature_names) * 5)
+    # Enhanced static dim: 23 (original) + 150 (global stats) = 173
+    static_dim = len(FIXED_FEATURES) + (len(train_loader.dataset.feature_names) * 6)
 
     # Pre-train using [RNN + Enhanced Static] -> Gated Head
     temp_head = GatedDecisionHead(input_dim=rnn_dim + static_dim).to(DEVICE)
@@ -393,6 +395,7 @@ def get_triple_features_v1(model, loader):
     Returns [Last_Value (25) + Original_Static (23) + RNN_Embedding (128)] = 176 dims
 
     Key difference from v2: Uses original static instead of enhanced static for XGBoost
+    RNN was trained with enhanced static (173 dims = 23 original + 150 global stats)
     """
     model.eval()
     features = []
@@ -453,7 +456,7 @@ def main():
 
     print(f"Input: {len(temporal_feats)} Temporal Features")
     print(f"       {len(FIXED_FEATURES)} Original Static Features")
-    print(f"       {len(temporal_feats) * 5} Global Stats (for RNN training only)")
+    print(f"       {len(temporal_feats) * 6} Global Stats (mean/max/min/std/slope/count - for RNN training only)")
     print(f"       Final XGBoost Input: {25 + len(FIXED_FEATURES) + 128} dims")
 
     # Store metrics for Hybrid
