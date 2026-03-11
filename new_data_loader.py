@@ -8,6 +8,11 @@ IMPORTANT: This loader uses features from the NEW format directly, without
 mapping to old feature names. This allows us to leverage all available features
 in the new dataset.
 
+FEATURE DETECTION: After loading, use the helper functions from new_data_helpers.py
+to properly distinguish between temporal (time-series) and static (scalar) features:
+    - get_temporal_features_from_new_format(patients)
+    - get_static_features_from_new_format(patients)
+
 New Format Structure:
     {
         'stay_id_string': {

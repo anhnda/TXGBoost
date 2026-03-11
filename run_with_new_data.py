@@ -35,7 +35,7 @@ sys.path.append(PT)
 # Import existing components
 from TBoostv2 import (
     seed_everything,
-    FIXED_FEATURES,
+    # FIXED_FEATURES,  # Not used - we detect features dynamically from new format
     SimpleStaticEncoder,
     GatedDecisionHead,
     EnhancedHybridDataset,
@@ -55,6 +55,13 @@ from utils.prepare_data import trainTestPatients, encodeCategoricalData
 
 # Import the new data loader
 from new_data_loader import load_and_prepare_new_format_patients
+
+# Import helpers for new data format
+from new_data_helpers import (
+    get_temporal_features_from_new_format,
+    get_static_features_from_new_format,
+    validate_temporal_features,
+)
 
 
 def main(data_filepath):
@@ -88,28 +95,33 @@ def main(data_filepath):
     print(f"  AKI negative: {len(patients) - aki_count}")
 
     # ========================================================================
-    # STEP 2: Extract features and encode
+    # STEP 2: Extract features and encode (using NEW format detection)
     # ========================================================================
     print("\n[Step 2] Extracting temporal and static features...")
-    temporal_feats = get_all_temporal_features(patients)
-    print(f"  Temporal features: {len(temporal_feats)}")
 
-    # Print available features
-    print(f"\n  Available temporal features:")
-    for i, feat in enumerate(temporal_feats[:10]):
-        print(f"    {feat}")
-    if len(temporal_feats) > 10:
-        print(f"    ... and {len(temporal_feats) - 10} more")
+    # Use new format-specific feature detection
+    temporal_feats = get_temporal_features_from_new_format(patients)
+    static_feats = get_static_features_from_new_format(patients)
 
-    # Encode static features
+    # Validate temporal features
+    temporal_feats, invalid_feats = validate_temporal_features(patients, temporal_feats)
+
+    if len(invalid_feats) > 0:
+        print(f"\n  Excluded {len(invalid_feats)} non-temporal features")
+
+    print(f"\n  Final temporal features: {len(temporal_feats)}")
+    print(f"  Final static features: {len(static_feats)}")
+
+    # Encode static features (use detected static features, not FIXED_FEATURES)
     print("\n[Step 3] Encoding static features...")
-    encoder = SimpleStaticEncoder(FIXED_FEATURES)
+    encoder = SimpleStaticEncoder(static_feats)
     encoder.fit(patients.patientList)
 
-    print(f"  Input: {len(temporal_feats)} Temporal Features")
-    print(f"         {len(FIXED_FEATURES)} Static Features")
-    print(f"         {len(temporal_feats) * 5} Global Stats (mean/max/min/std/slope)")
-    print(f"         Total Enhanced Static: {len(FIXED_FEATURES) + len(temporal_feats) * 5} dims")
+    print(f"\n  Feature Summary:")
+    print(f"    Temporal Features: {len(temporal_feats)}")
+    print(f"    Static Features: {len(static_feats)}")
+    print(f"    Global Stats: {len(temporal_feats) * 5} (mean/max/min/std/slope)")
+    print(f"    Total Enhanced Static: {len(static_feats) + len(temporal_feats) * 5} dims")
 
     # ========================================================================
     # STEP 3: Training with cross-validation
