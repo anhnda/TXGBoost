@@ -119,6 +119,10 @@ def convert_patient_data(stay_id_str: str, patient_data: Dict[str, Any]) -> Pati
     Returns:
         Patient object compatible with existing pipeline
     """
+    # Validate input
+    if not isinstance(patient_data, dict):
+        raise ValueError(f"patient_data must be dict, got {type(patient_data)}")
+
     # Extract IDs
     subject_id, hadm_id, stay_id = extract_ids_from_stay_id(stay_id_str)
 
@@ -127,11 +131,14 @@ def convert_patient_data(stay_id_str: str, patient_data: Dict[str, Any]) -> Pati
 
     # Use first temporal measurement as intime (or use a default)
     intime = None
-    for feature_value in patient_data.values():
-        if isinstance(feature_value, list) and len(feature_value) > 0:
-            if isinstance(feature_value[0], dict) and 'charttime' in feature_value[0]:
-                intime = pd.to_datetime(feature_value[0]['charttime'])
-                break
+    try:
+        for feature_value in patient_data.values():
+            if isinstance(feature_value, list) and len(feature_value) > 0:
+                if isinstance(feature_value[0], dict) and 'charttime' in feature_value[0]:
+                    intime = pd.to_datetime(feature_value[0]['charttime'])
+                    break
+    except Exception:
+        pass
 
     if intime is None:
         # Default to a reference date if no temporal data found
@@ -139,7 +146,7 @@ def convert_patient_data(stay_id_str: str, patient_data: Dict[str, Any]) -> Pati
 
     # Build measures dictionary using NEW feature names
     measures = {}
-    all_skip_features = set(EXCLUDE_FEATURES).union(set(ADDITIONAL_SKIP_FEATURES))
+    all_skip_features = EXCLUDE_FEATURES.union(ADDITIONAL_SKIP_FEATURES)
 
     for feature_name, feature_value in patient_data.items():
         # Skip metadata and excluded features
@@ -207,20 +214,42 @@ def load_new_format_data(filepath: Union[str, Path]) -> Patients:
 
     print(f"Loading data from {filepath}...")
 
-    # Load joblib file
-    data_dict = joblib.load(filepath)
+    # Load data (try joblib first, then pickle)
+    try:
+        data_dict = joblib.load(filepath)
+    except Exception as e:
+        print(f"  Joblib load failed, trying pickle...")
+        import pickle
+        with open(filepath, 'rb') as f:
+            data_dict = pickle.load(f)
 
     if not isinstance(data_dict, dict):
         raise ValueError(f"Expected dict, got {type(data_dict)}")
 
     print(f"Loaded {len(data_dict)} patient records")
 
+    # Quick data structure check
+    if len(data_dict) > 0:
+        first_key = list(data_dict.keys())[0]
+        first_patient = data_dict[first_key]
+        print(f"  Sample stay_id: {first_key}")
+        print(f"  Sample patient type: {type(first_patient)}")
+        if isinstance(first_patient, dict):
+            print(f"  Sample patient has {len(first_patient)} fields")
+            print(f"  Sample fields: {list(first_patient.keys())[:10]}")
+
+    print("\nConverting patient records...")
+
     # Convert each patient record
     patient_list = []
     conversion_errors = 0
+    error_messages = []
     feature_names_set = set()
 
-    for stay_id_str, patient_data in data_dict.items():
+    total_patients = len(data_dict)
+    progress_interval = max(1, total_patients // 20)  # Print progress every 5%
+
+    for idx, (stay_id_str, patient_data) in enumerate(data_dict.items(), 1):
         try:
             patient = convert_patient_data(stay_id_str, patient_data)
             patient_list.append(patient)
@@ -229,14 +258,32 @@ def load_new_format_data(filepath: Union[str, Path]) -> Patients:
             feature_names_set.update(patient.measures.keys())
 
         except Exception as e:
-            print(f"Warning: Failed to convert patient {stay_id_str}: {e}")
+            error_msg = f"Patient {stay_id_str}: {str(e)}"
+            if conversion_errors < 5:  # Only print first 5 errors
+                print(f"  Warning: Failed to convert {error_msg}")
+            error_messages.append(error_msg)
             conversion_errors += 1
             continue
 
-    if conversion_errors > 0:
-        print(f"Warning: {conversion_errors} patients failed conversion")
+        # Print progress
+        if idx % progress_interval == 0 or idx == total_patients:
+            pct = (idx / total_patients) * 100
+            print(f"  Progress: {idx}/{total_patients} ({pct:.1f}%)")
 
-    print(f"Successfully converted {len(patient_list)} patients")
+    if conversion_errors > 5:
+        print(f"  ... and {conversion_errors - 5} more conversion errors (suppressed)")
+
+    if conversion_errors > 0:
+        print(f"\nWarning: {conversion_errors} patients failed conversion")
+        # Save error log
+        error_log_path = Path("result/conversion_errors.log")
+        error_log_path.parent.mkdir(exist_ok=True)
+        with open(error_log_path, 'w') as f:
+            for err in error_messages:
+                f.write(err + '\n')
+        print(f"  Error details saved to: {error_log_path}")
+
+    print(f"\nSuccessfully converted {len(patient_list)} patients")
     print(f"Total unique features: {len(feature_names_set)}")
 
     # Categorize features
