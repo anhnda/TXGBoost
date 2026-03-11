@@ -139,7 +139,7 @@ def convert_patient_data(stay_id_str: str, patient_data: Dict[str, Any]) -> Pati
 
     # Build measures dictionary using NEW feature names
     measures = {}
-    all_skip_features = EXCLUDE_FEATURES | ADDITIONAL_SKIP_FEATURES
+    all_skip_features = set(EXCLUDE_FEATURES).union(set(ADDITIONAL_SKIP_FEATURES))
 
     for feature_name, feature_value in patient_data.items():
         # Skip metadata and excluded features
