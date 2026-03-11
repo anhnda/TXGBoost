@@ -72,12 +72,14 @@ def main(data_filepath):
     seed_everything(xseed)
 
     # ========================================================================
-    # STEP 1: Load data using new data loader
+    # STEP 1: Load data using new data loader (with caching)
     # ========================================================================
     print("\n[Step 1] Loading data in new format...")
+    print("Note: Using cache for faster loading (cache: tmp/cache_newdata.cache)")
     patients = load_and_prepare_new_format_patients(
         data_filepath,
-        min_feature_coverage=0.8
+        min_feature_coverage=0.8,
+        use_cache=True  # Enable caching for faster subsequent runs
     )
 
     print(f"\nLoaded {len(patients)} patients")

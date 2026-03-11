@@ -188,7 +188,7 @@ def convert_patient_data(stay_id_str: str, patient_data: Dict[str, Any]) -> Pati
     return patient
 
 
-def load_new_format_data(filepath: Union[str, Path]) -> Patients:
+def load_new_format_data(filepath: Union[str, Path], use_cache: bool = True) -> Patients:
     """
     Load patient data from joblib file in new format and convert to Patients object.
 
@@ -196,6 +196,7 @@ def load_new_format_data(filepath: Union[str, Path]) -> Patients:
 
     Args:
         filepath: Path to joblib file containing dictionary in new format
+        use_cache: If True, use cached conversion if available (default: True)
 
     Returns:
         Patients object compatible with TXGBoost pipeline
@@ -207,6 +208,33 @@ def load_new_format_data(filepath: Union[str, Path]) -> Patients:
         >>> from TBoostv2 import main
         >>> # patients can be used directly in the pipeline
     """
+    filepath = Path(filepath)
+
+    # Setup cache
+    cache_dir = Path("tmp")
+    cache_dir.mkdir(exist_ok=True)
+    cache_path = cache_dir / "cache_newdata.cache"
+
+    # Try to load from cache
+    if use_cache and cache_path.exists():
+        print(f"Loading from cache: {cache_path}...")
+        try:
+            import pickle
+            with open(cache_path, 'rb') as f:
+                patients = pickle.load(f)
+            print(f"✓ Loaded {len(patients)} patients from cache")
+
+            # Print summary
+            aki_count = sum([1 for p in patients.patientList if p.akdPositive])
+            print(f"  AKI positive: {aki_count} ({aki_count / len(patients):.2%})")
+            print(f"  AKI negative: {len(patients) - aki_count}")
+
+            return patients
+        except Exception as e:
+            print(f"  Cache load failed: {e}")
+            print(f"  Will reload and rebuild cache...")
+
+    # Original loading code starts here
     filepath = Path(filepath)
 
     if not filepath.exists():
@@ -309,13 +337,25 @@ def load_new_format_data(filepath: Union[str, Path]) -> Patients:
     print(f"  AKI positive: {aki_count} ({aki_count / len(patients):.2%})")
     print(f"  AKI negative: {len(patients) - aki_count} ({(len(patients) - aki_count) / len(patients):.2%})")
 
+    # Save to cache for faster future loads
+    if use_cache:
+        print(f"\nSaving to cache: {cache_path}...")
+        try:
+            import pickle
+            with open(cache_path, 'wb') as f:
+                pickle.dump(patients, f, protocol=pickle.HIGHEST_PROTOCOL)
+            print(f"✓ Cache saved successfully")
+        except Exception as e:
+            print(f"  Warning: Failed to save cache: {e}")
+
     return patients
 
 
 def load_and_prepare_new_format_patients(
     filepath: Union[str, Path],
     nullable_measures: List[str] = None,
-    min_feature_coverage: float = 0.8
+    min_feature_coverage: float = 0.8,
+    use_cache: bool = True
 ) -> Patients:
     """
     Load and prepare patient data with the same preprocessing as the original pipeline.
@@ -326,6 +366,7 @@ def load_and_prepare_new_format_patients(
         filepath: Path to joblib file
         nullable_measures: List of measures to fill with 0 if missing (None = use defaults)
         min_feature_coverage: Minimum fraction of patients that must have a feature
+        use_cache: If True, use cached conversion if available (default: True)
 
     Returns:
         Preprocessed Patients object ready for model training
@@ -337,8 +378,8 @@ def load_and_prepare_new_format_patients(
         # The preprocessing will work with whatever features are present
         nullable_measures = NULLABLE_MEASURES
 
-    # Load data
-    patients = load_new_format_data(filepath)
+    # Load data (with caching)
+    patients = load_new_format_data(filepath, use_cache=use_cache)
 
     print("\nPreprocessing data...")
 
@@ -399,7 +440,13 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         # Load from command line argument
         filepath = sys.argv[1]
-        patients = load_and_prepare_new_format_patients(filepath)
+
+        # Check for --no-cache flag
+        use_cache = '--no-cache' not in sys.argv
+        if not use_cache:
+            print("Cache disabled (--no-cache flag)")
+
+        patients = load_and_prepare_new_format_patients(filepath, use_cache=use_cache)
 
         print("\nSample patient info:")
         if len(patients) > 0:
@@ -423,9 +470,14 @@ if __name__ == "__main__":
                 val = sample.measures[feat]
                 print(f"    {feat}: {val}")
     else:
-        print("\nUsage: python new_data_loader.py <path_to_joblib_file>")
+        print("\nUsage: python new_data_loader.py <path_to_joblib_file> [--no-cache]")
+        print("\nOptions:")
+        print("  --no-cache    Force reload and rebuild cache")
         print("\nOr import in your code:")
         print("  from new_data_loader import load_and_prepare_new_format_patients")
         print("  patients = load_and_prepare_new_format_patients('data.joblib')")
+        print("  # Use use_cache=False to force rebuild")
         print("\nNote: This loader uses feature names from the NEW format directly.")
         print("      No mapping to old format names is performed.")
+        print("\nCaching: Converted data is cached to tmp/cache_newdata.cache")
+        print("         for faster subsequent loads.")
