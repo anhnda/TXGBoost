@@ -12,6 +12,7 @@ import copy
 from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
+import torch.optim
 from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
 import os
@@ -37,11 +38,11 @@ from TBoostv2 import (
     seed_everything,
     # FIXED_FEATURES,  # Not used - we detect features dynamically from new format
     SimpleStaticEncoder,
-    GatedDecisionHead,
+    # GatedDecisionHead,  # Imported in train_rnn_extractor_new_format
     EnhancedHybridDataset,
     enhanced_collate_fn,
     RNNFeatureExtractor,
-    train_rnn_extractor,
+    # train_rnn_extractor,  # Not used - we use train_rnn_extractor_new_format
     get_triple_features,
     xseed,
 )
@@ -62,6 +63,84 @@ from new_data_helpers import (
     get_static_features_from_new_format,
     validate_temporal_features,
 )
+
+import torch.nn as nn
+from TimeEmbedding import DEVICE
+
+
+def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, optimizer,
+                                     static_dim, epochs=50):
+    """
+    Train RNN extractor with correct dimensions for new data format.
+
+    This is a wrapper around the original train_rnn_extractor that properly
+    handles the dynamic static dimension from new format data.
+    """
+    rnn_dim = model.rnn_cell.hidden_dim
+
+    # Import here to avoid circular dependency
+    from TBoostv2 import GatedDecisionHead
+    import copy
+
+    # Create head with CORRECT dimensions
+    temp_head = GatedDecisionHead(input_dim=rnn_dim + static_dim).to(DEVICE)
+    full_optimizer = torch.optim.Adam(
+        list(model.parameters()) + list(temp_head.parameters()),
+        lr=0.001
+    )
+
+    best_auc = 0
+    best_state = None
+    patience = 6
+    counter = 0
+
+    print(f"  [Stage 1] Pre-training RNN with Gated Head")
+    print(f"    RNN dim: {rnn_dim}, Static dim: {static_dim}, Total: {rnn_dim + static_dim}")
+
+    for epoch in range(epochs):
+        model.train()
+        temp_head.train()
+
+        for t_data, labels, s_data in train_loader:
+            labels = labels.to(DEVICE)
+            s_data = s_data.to(DEVICE)
+            h = model(t_data)
+            combined = torch.cat([h, s_data], dim=1)
+            preds = temp_head(combined).squeeze(-1)
+            loss = criterion(preds, labels)
+            full_optimizer.zero_grad()
+            loss.backward()
+            full_optimizer.step()
+
+        if (epoch+1) % 5 == 0:
+            model.eval()
+            temp_head.eval()
+            all_preds, all_lbls = [], []
+            with torch.no_grad():
+                for t_data, labels, s_data in val_loader:
+                    s_data = s_data.to(DEVICE)
+                    h = model(t_data)
+                    combined = torch.cat([h, s_data], dim=1)
+                    preds = temp_head(combined).squeeze(-1)
+                    all_preds.extend(preds.cpu().numpy())
+                    all_lbls.extend(labels.cpu().numpy())
+
+            from sklearn.metrics import average_precision_score, roc_auc_score
+            aupr = average_precision_score(all_lbls, all_preds)
+            auc_val = aupr
+            print(f"    Epoch {epoch+1} Val AUPR: {auc_val:.4f}")
+
+            if auc_val > best_auc:
+                best_auc = auc_val
+                best_state = copy.deepcopy(model.state_dict())
+                counter = 0
+            else:
+                counter += 1
+                if counter >= patience:
+                    break
+
+    model.load_state_dict(best_state)
+    return model
 
 
 def main(data_filepath):
@@ -128,6 +207,10 @@ def main(data_filepath):
     # ========================================================================
     print("\n[Step 4] Starting cross-validation training...")
 
+    # Calculate static dimension for RNN training
+    # Enhanced static = len(static_feats) + (len(temporal_feats) * 5 global stats)
+    actual_static_dim = len(static_feats) + (len(temporal_feats) * 5)
+
     # Storage for metrics
     metrics_hybrid = {k: [] for k in ['auc', 'acc', 'spec', 'prec', 'rec', 'auc_pr']}
     metrics_base = {k: [] for k in ['auc', 'acc', 'spec', 'prec', 'rec', 'auc_pr']}
@@ -160,10 +243,19 @@ def main(data_filepath):
 
         # Stage 1: Train RNN
         print("\n  [Stage 1] Training RNN extractor...")
-        from TimeEmbedding import DEVICE
+        print(f"    Static features: {len(static_feats)}")
+        print(f"    Global stats: {len(temporal_feats) * 5}")
+        print(f"    Total static dim: {actual_static_dim}")
+
         rnn = RNNFeatureExtractor(len(temporal_feats), hidden_dim=128).to(DEVICE)
         opt = torch.optim.Adam(rnn.parameters(), lr=0.001)
-        rnn = train_rnn_extractor(rnn, train_loader, val_loader, nn.BCELoss(), opt, epochs=50)
+
+        # Use new format-aware training function
+        rnn = train_rnn_extractor_new_format(
+            rnn, train_loader, val_loader, nn.BCELoss(), opt,
+            static_dim=actual_static_dim,
+            epochs=50
+        )
 
         # Stage 2: Extract features
         print("\n  [Stage 2] Extracting triple features...")
@@ -171,7 +263,9 @@ def main(data_filepath):
         X_val, y_val = get_triple_features(rnn, val_loader)
         X_test, y_test = get_triple_features(rnn, test_loader)
 
-        print(f"    Feature dimensions: {X_train.shape[1]} (25 Last + 148 Enhanced Static + 128 RNN)")
+        expected_dims = len(temporal_feats) + actual_static_dim + 128
+        print(f"    Feature dimensions: {X_train.shape[1]} (expected: {expected_dims})")
+        print(f"      = {len(temporal_feats)} Last + {actual_static_dim} Enhanced Static + 128 RNN")
 
         # Stage 3: Train XGBoost
         print("\n  [Stage 3] Training XGBoost...")
