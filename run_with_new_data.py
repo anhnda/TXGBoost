@@ -312,6 +312,9 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     # Add learning rate scheduler
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(full_optimizer, T_max=epochs, eta_min=1e-5)
 
+    # Mixed precision training for better GPU utilization
+    scaler = torch.cuda.amp.GradScaler()
+
     best_auc = 0
     best_state = None
     best_epoch = 0
@@ -323,6 +326,7 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     print(f"    Architecture: Feature Attention → 3 Soft Decision Trees (depth 6)")
     print(f"    Early stopping: patience={patience}")
     print(f"    Learning rate: 0.001 -> 1e-5 (cosine annealing)")
+    print(f"    Mixed precision: Enabled (FP16/FP32 automatic)")
 
     for epoch in range(epochs):
         model.train()
@@ -331,24 +335,32 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
         for t_data, labels, s_data in train_loader:
             labels = labels.to(DEVICE)
             s_data = s_data.to(DEVICE)
-            h = model(t_data)
-            combined = torch.cat([h, s_data], dim=1)
-            preds = temp_head(combined).squeeze(-1)
-
-            # Weighted BCE loss for class imbalance
-            weights = torch.where(labels == 1, pos_weight, 1.0).to(DEVICE)
-            loss = nn.BCELoss(weight=weights)(preds, labels)
 
             full_optimizer.zero_grad()
-            loss.backward()
 
-            # Gradient clipping to prevent exploding gradients
+            # Mixed precision forward pass
+            with torch.cuda.amp.autocast():
+                h = model(t_data)
+                combined = torch.cat([h, s_data], dim=1)
+                preds = temp_head(combined).squeeze(-1)
+
+                # Weighted BCE loss for class imbalance
+                weights = torch.where(labels == 1, pos_weight, 1.0).to(DEVICE)
+                loss = nn.BCELoss(weight=weights)(preds, labels)
+
+            # Mixed precision backward pass
+            scaler.scale(loss).backward()
+
+            # Gradient clipping (unscale first for accurate norm)
+            scaler.unscale_(full_optimizer)
             torch.nn.utils.clip_grad_norm_(
                 list(model.parameters()) + list(temp_head.parameters()),
                 max_norm=1.0
             )
 
-            full_optimizer.step()
+            # Optimizer step with scaler
+            scaler.step(full_optimizer)
+            scaler.update()
 
         # Step the learning rate scheduler
         scheduler.step()
@@ -357,7 +369,7 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             model.eval()
             temp_head.eval()
             all_preds, all_lbls = [], []
-            with torch.no_grad():
+            with torch.no_grad(), torch.cuda.amp.autocast():
                 for t_data, labels, s_data in val_loader:
                     s_data = s_data.to(DEVICE)
                     h = model(t_data)
@@ -479,9 +491,35 @@ def main(data_filepath):
         val_ds = EnhancedHybridDataset(val_p, temporal_feats, encoder, stats)
         test_ds = EnhancedHybridDataset(test_p_list, temporal_feats, encoder, stats)
 
-        train_loader = DataLoader(train_ds, batch_size=64, shuffle=True, collate_fn=enhanced_collate_fn)
-        val_loader = DataLoader(val_ds, batch_size=64, shuffle=False, collate_fn=enhanced_collate_fn)
-        test_loader = DataLoader(test_ds, batch_size=64, shuffle=False, collate_fn=enhanced_collate_fn)
+        # ====================================================================
+        # GPU OPTIMIZATION CONFIGURATION
+        # ====================================================================
+        # Problem: CPU usage 15.7%, GPU only 14% → CPU bottleneck!
+        # Solution: Optimize data pipeline and leverage GPU capacity
+        #
+        # Optimizations:
+        # 1. Batch size: 64 → 256 (4x larger, GPU has 24GB available)
+        # 2. num_workers: 6 for parallel data loading
+        # 3. pin_memory: True for faster CPU→GPU transfer
+        # 4. persistent_workers: Keeps workers alive between epochs
+        # 5. Mixed precision (AMP): FP16/FP32 for 2-3x speedup
+        #
+        # Expected: GPU usage → 60-80%, GPU memory → 8-12GB
+        # ====================================================================
+        print(f"\n  GPU Optimization: Batch=256, Workers=6, AMP=Enabled")
+
+        train_loader = DataLoader(
+            train_ds, batch_size=256, shuffle=True, collate_fn=enhanced_collate_fn,
+            num_workers=6, pin_memory=True, persistent_workers=True
+        )
+        val_loader = DataLoader(
+            val_ds, batch_size=256, shuffle=False, collate_fn=enhanced_collate_fn,
+            num_workers=4, pin_memory=True, persistent_workers=True
+        )
+        test_loader = DataLoader(
+            test_ds, batch_size=256, shuffle=False, collate_fn=enhanced_collate_fn,
+            num_workers=4, pin_memory=True, persistent_workers=True
+        )
 
         # Stage 1: Train RNN
         print("\n  [Stage 1] Training RNN extractor...")
