@@ -34,7 +34,7 @@ PT = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(PT)
 
 # Import existing components
-from TBoostv2 import (
+from TBoostv3 import (
     seed_everything,
     # FIXED_FEATURES,  # Not used - we detect features dynamically from new format
     SimpleStaticEncoder,
@@ -587,7 +587,7 @@ def main(data_filepath):
         data_filepath: Path to joblib file containing data in new format
     """
     print("="*80)
-    print("TBoostv2 WITH NEW DATA FORMAT")
+    print("TBoostv3 WITH NEW DATA FORMAT")
     print("="*80)
 
     # Set random seed for reproducibility
@@ -711,7 +711,7 @@ def main(data_filepath):
         rnn = train_rnn_extractor_new_format(
             rnn, train_loader, val_loader, nn.BCELoss(), opt,
             static_dim=actual_static_dim,
-            epochs=50
+            epochs=80
         )
 
         # Stage 2: Extract features
