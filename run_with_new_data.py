@@ -65,7 +65,59 @@ from new_data_helpers import (
 )
 
 import torch.nn as nn
+import torch.nn.functional as F
 from TimeEmbedding import DEVICE
+
+
+# ==============================================================================
+# Loss Functions
+# ==============================================================================
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss - Addresses class imbalance by focusing on hard examples.
+
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+
+    Where:
+    - alpha: Balances positive/negative examples
+    - gamma: Focuses on hard examples (typical: 2.0)
+    - (1 - p_t)^gamma: Down-weights easy examples
+
+    Much better than weighted BCE for severe imbalance.
+    """
+
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, logits, targets):
+        """
+        Args:
+            logits: [batch_size] raw predictions (no sigmoid)
+            targets: [batch_size] ground truth (0 or 1)
+        """
+        # Get probabilities
+        probs = torch.sigmoid(logits)
+
+        # Compute focal loss
+        # For positive class (target=1): -alpha * (1-p)^gamma * log(p)
+        # For negative class (target=0): -(1-alpha) * p^gamma * log(1-p)
+        ce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+
+        p_t = probs * targets + (1 - probs) * (1 - targets)
+        alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+
+        loss = alpha_t * (1 - p_t) ** self.gamma * ce_loss
+
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:
+            return loss
 
 
 # ==============================================================================
@@ -86,13 +138,13 @@ class ImprovedGatedHead(nn.Module):
     def __init__(self, input_dim, hidden_dim=128, dropout=0.3):
         super(ImprovedGatedHead, self).__init__()
 
-        # Input normalization
-        self.input_norm = nn.LayerNorm(input_dim)
+        # Input normalization - BatchNorm for better scaling with different batch stats
+        self.input_norm = nn.BatchNorm1d(input_dim)
 
         # Feature selection gate (learns which features matter)
         self.gate = nn.Sequential(
             nn.Linear(input_dim, input_dim),
-            nn.LayerNorm(input_dim),
+            nn.BatchNorm1d(input_dim),
             nn.Tanh(),  # Smoother than sigmoid
             nn.Dropout(dropout * 0.5)
         )
@@ -101,20 +153,20 @@ class ImprovedGatedHead(nn.Module):
         # Path 1: Deep narrow path
         self.deep_path = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.SiLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),  # Changed from SiLU - more stable
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.SiLU(),
+            nn.BatchNorm1d(hidden_dim // 2),
+            nn.ReLU(),
             nn.Dropout(dropout),
         )
 
         # Path 2: Wide shallow path
         self.wide_path = nn.Sequential(
             nn.Linear(input_dim, hidden_dim * 2),
-            nn.LayerNorm(hidden_dim * 2),
-            nn.SiLU(),
+            nn.BatchNorm1d(hidden_dim * 2),
+            nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim * 2, hidden_dim // 2),
         )
@@ -122,8 +174,8 @@ class ImprovedGatedHead(nn.Module):
         # Combine paths
         self.combine = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.SiLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.ReLU(),
             nn.Dropout(dropout),
         )
 
@@ -148,6 +200,17 @@ class ImprovedGatedHead(nn.Module):
 
         # Output logits (no sigmoid - using BCEWithLogitsLoss)
         return self.output(features)
+
+    def initialize_weights(self):
+        """Initialize weights for better convergence"""
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
 
 class SoftDecisionTree(nn.Module):
@@ -364,14 +427,22 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     neg_count = np.sum(all_labels == 0)
     pos_weight = neg_count / (pos_count + 1e-6)
 
-    print(f"  [Stage 1] Class distribution: Pos={pos_count}, Neg={neg_count}, Pos_weight={pos_weight:.2f}")
+    pos_ratio = pos_count / (pos_count + neg_count)
+    print(f"  [Stage 1] Class distribution: Pos={pos_count} ({pos_ratio:.1%}), Neg={neg_count}, Pos_weight={pos_weight:.2f}")
+
+    # Create Focal Loss (better for imbalanced data than weighted BCE)
+    # alpha = weight for positive class (higher = focus more on positives)
+    # gamma = focusing parameter (higher = focus more on hard examples)
+    focal_alpha = min(0.75, pos_ratio * 4)  # Scale with imbalance, cap at 0.75
+    criterion = FocalLoss(alpha=focal_alpha, gamma=2.0)
+    print(f"  [Stage 1] Using Focal Loss: alpha={focal_alpha:.3f}, gamma=2.0")
 
     # Create decision head: ImprovedGatedHead
     # Why this instead of trees?
     # - Simpler = easier to train and debug
     # - Multi-scale processing (deep + wide paths)
-    # - LayerNorm for stability
-    # - Skip connections for gradient flow
+    # - BatchNorm for feature scaling
+    # - Focal Loss for severe imbalance
     # - Proven architecture that converges reliably
     temp_head = ImprovedGatedHead(
         input_dim=rnn_dim + static_dim,
@@ -379,20 +450,22 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
         dropout=0.3
     ).to(DEVICE)
 
-    print(f"  [Stage 1] Using ImprovedGatedHead: Multi-scale (deep+wide) with LayerNorm")
+    # Initialize weights for better convergence
+    temp_head.initialize_weights()
+
+    print(f"  [Stage 1] Using ImprovedGatedHead: Multi-scale with BatchNorm + Kaiming init")
 
     full_optimizer = torch.optim.Adam(
         list(model.parameters()) + list(temp_head.parameters()),
-        lr=0.002,  # Slightly higher initial LR
-        weight_decay=1e-4  # Stronger regularization
+        lr=0.001,  # Lower initial LR for Focal Loss (more stable)
+        weight_decay=5e-5  # Moderate regularization
     )
 
-    # Add learning rate scheduler with warmup
-    # Problem: Cosine drops too fast (0.001 -> 0.00001)
-    # Solution: ReduceLROnPlateau - only reduce when stuck
+    # Add learning rate scheduler
+    # ReduceLROnPlateau - only reduce when stuck
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        full_optimizer, mode='max', factor=0.5, patience=3,
-        min_lr=1e-5, verbose=True
+        full_optimizer, mode='max', factor=0.5, patience=4,
+        min_lr=1e-6, verbose=True
     )
 
     # Mixed precision training for better GPU utilization
@@ -404,13 +477,14 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     patience = 8  # 8 eval intervals * 5 epochs = 40 epochs max wait
     counter = 0
 
-    print(f"  [Stage 1] Pre-training RNN with ImprovedGatedHead")
+    print(f"  [Stage 1] Pre-training RNN with ImprovedGatedHead + Focal Loss")
     print(f"    RNN dim: {rnn_dim}, Static dim: {static_dim}, Total: {rnn_dim + static_dim}")
-    print(f"    Architecture: Input Norm → Gate → Multi-scale (Deep+Wide) → Output")
+    print(f"    Architecture: BatchNorm → Gate → Multi-scale (Deep+Wide) → Output")
+    print(f"    Loss: Focal Loss (better for severe imbalance)")
     print(f"    Early stopping: patience={patience}")
-    print(f"    Learning rate: 0.002 (ReduceLROnPlateau with factor=0.5)")
+    print(f"    Learning rate: 0.001 (ReduceLROnPlateau, patience=4, factor=0.5)")
     print(f"    Mixed precision: Enabled (FP16/FP32 automatic)")
-    print(f"    Weight decay: 1e-4 (stronger regularization)")
+    print(f"    Weight decay: 5e-5 | Dropout: 0.3 | Init: Kaiming")
 
     for epoch in range(epochs):
         model.train()
@@ -428,11 +502,10 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             with torch.amp.autocast('cuda'):
                 h = model(t_data)
                 combined = torch.cat([h, s_data], dim=1)
-                preds = temp_head(combined).squeeze(-1)
+                logits = temp_head(combined).squeeze(-1)
 
-                # Weighted BCE loss for class imbalance (use BCEWithLogitsLoss for autocast safety)
-                weights = torch.where(labels == 1, pos_weight, 1.0).to(DEVICE)
-                loss = nn.BCEWithLogitsLoss(weight=weights)(preds, labels)
+                # Focal loss for severe class imbalance
+                loss = criterion(logits, labels)
 
             # Mixed precision backward pass
             scaler.scale(loss).backward()
@@ -476,11 +549,18 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             aupr = average_precision_score(all_lbls, all_preds)
             auc_val = aupr
 
+            # Prediction distribution analysis
+            pred_mean = np.mean(all_preds)
+            pred_std = np.std(all_preds)
+            pred_pos_rate = np.sum(np.array(all_preds) > 0.5) / len(all_preds)
+            true_pos_rate = np.mean(all_lbls)
+
             # Step scheduler with validation metric (ReduceLROnPlateau)
             scheduler.step(auc_val)
 
             current_lr = full_optimizer.param_groups[0]['lr']
-            print(f"Val AUPR: {auc_val:.4f} | LR: {current_lr:.6f}")
+            print(f"Val AUPR: {auc_val:.4f} | LR: {current_lr:.6f} | Pred: {pred_mean:.3f}±{pred_std:.3f} | "
+                  f"PredPos: {pred_pos_rate:.1%} vs TruePos: {true_pos_rate:.1%}")
 
             if auc_val > best_auc:
                 best_auc = auc_val
