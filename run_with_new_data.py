@@ -75,7 +75,7 @@ from TimeEmbedding import DEVICE
 
 class FocalLoss(nn.Module):
     """
-    Focal Loss - Addresses class imbalance by focusing on hard examples.
+    Focal Loss with Label Smoothing - Addresses class imbalance and overfitting.
 
     FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
 
@@ -83,14 +83,16 @@ class FocalLoss(nn.Module):
     - alpha: Balances positive/negative examples
     - gamma: Focuses on hard examples (typical: 2.0)
     - (1 - p_t)^gamma: Down-weights easy examples
+    - label_smoothing: Prevents overconfidence (0.1 = smooth 1→0.9, 0→0.1)
 
     Much better than weighted BCE for severe imbalance.
     """
 
-    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+    def __init__(self, alpha=0.25, gamma=2.0, label_smoothing=0.1, reduction='mean'):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
+        self.label_smoothing = label_smoothing
         self.reduction = reduction
 
     def forward(self, logits, targets):
@@ -99,13 +101,15 @@ class FocalLoss(nn.Module):
             logits: [batch_size] raw predictions (no sigmoid)
             targets: [batch_size] ground truth (0 or 1)
         """
+        # Apply label smoothing
+        # 1 → 1 - smoothing, 0 → smoothing
+        targets_smooth = targets * (1 - self.label_smoothing) + self.label_smoothing * 0.5
+
         # Get probabilities
         probs = torch.sigmoid(logits)
 
         # Compute focal loss
-        # For positive class (target=1): -alpha * (1-p)^gamma * log(p)
-        # For negative class (target=0): -(1-alpha) * p^gamma * log(1-p)
-        ce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+        ce_loss = F.binary_cross_entropy_with_logits(logits, targets_smooth, reduction='none')
 
         p_t = probs * targets + (1 - probs) * (1 - targets)
         alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
@@ -126,79 +130,66 @@ class FocalLoss(nn.Module):
 
 class ImprovedGatedHead(nn.Module):
     """
-    Improved Gated Decision Head - Simpler and more stable than tree-based approaches.
+    Simplified Gated Head - Designed to prevent overfitting.
 
-    Key improvements over original GatedDecisionHead:
-    - LayerNorm for training stability
-    - Larger hidden dimensions for more capacity
-    - Skip connections for better gradient flow
-    - Multi-scale feature processing
+    Key anti-overfitting measures:
+    - Simpler architecture (removed wide path - too much capacity)
+    - Much higher dropout (0.5-0.6)
+    - Feature dropout layer
+    - Fewer parameters overall
     """
 
-    def __init__(self, input_dim, hidden_dim=128, dropout=0.3):
+    def __init__(self, input_dim, hidden_dim=128, dropout=0.5):
         super(ImprovedGatedHead, self).__init__()
 
-        # Input normalization - BatchNorm for better scaling with different batch stats
+        # Input normalization
         self.input_norm = nn.BatchNorm1d(input_dim)
+
+        # Feature dropout - randomly drop features during training
+        self.feature_dropout = nn.Dropout(dropout * 0.4)
 
         # Feature selection gate (learns which features matter)
         self.gate = nn.Sequential(
             nn.Linear(input_dim, input_dim),
             nn.BatchNorm1d(input_dim),
-            nn.Tanh(),  # Smoother than sigmoid
-            nn.Dropout(dropout * 0.5)
+            nn.Tanh(),
+            nn.Dropout(dropout * 0.6)
         )
 
-        # Multi-scale processing
-        # Path 1: Deep narrow path
-        self.deep_path = nn.Sequential(
+        # Single deep path (removed wide path to reduce capacity)
+        self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(),  # Changed from SiLU - more stable
+            nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-        )
-
-        # Path 2: Wide shallow path
-        self.wide_path = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim * 2),
-            nn.BatchNorm1d(hidden_dim * 2),
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.BatchNorm1d(hidden_dim // 4),
             nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, hidden_dim // 2),
-        )
-
-        # Combine paths
-        self.combine = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
+            nn.Dropout(dropout * 0.8)
         )
 
         # Final prediction (outputs logits)
-        self.output = nn.Linear(hidden_dim, 1)
+        self.output = nn.Linear(hidden_dim // 4, 1)
 
     def forward(self, x):
         # Normalize input
         x = self.input_norm(x)
 
+        # Feature dropout (stronger regularization)
+        x = self.feature_dropout(x)
+
         # Apply learned feature gate
         gate = self.gate(x)
         x_gated = x * gate
 
-        # Multi-scale processing
-        deep_out = self.deep_path(x_gated)
-        wide_out = self.wide_path(x_gated)
+        # Encode features
+        features = self.encoder(x_gated)
 
-        # Concatenate and combine
-        combined = torch.cat([deep_out, wide_out], dim=-1)
-        features = self.combine(combined)
-
-        # Output logits (no sigmoid - using BCEWithLogitsLoss)
+        # Output logits (no sigmoid - using FocalLoss)
         return self.output(features)
 
     def initialize_weights(self):
@@ -430,41 +421,41 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     pos_ratio = pos_count / (pos_count + neg_count)
     print(f"  [Stage 1] Class distribution: Pos={pos_count} ({pos_ratio:.1%}), Neg={neg_count}, Pos_weight={pos_weight:.2f}")
 
-    # Create Focal Loss (better for imbalanced data than weighted BCE)
+    # Create Focal Loss with Label Smoothing
     # alpha = weight for positive class (higher = focus more on positives)
     # gamma = focusing parameter (higher = focus more on hard examples)
+    # label_smoothing = prevents overconfidence (critical for overfitting)
     focal_alpha = min(0.75, pos_ratio * 4)  # Scale with imbalance, cap at 0.75
-    criterion = FocalLoss(alpha=focal_alpha, gamma=2.0)
-    print(f"  [Stage 1] Using Focal Loss: alpha={focal_alpha:.3f}, gamma=2.0")
+    criterion = FocalLoss(alpha=focal_alpha, gamma=2.0, label_smoothing=0.15)
+    print(f"  [Stage 1] Using Focal Loss: alpha={focal_alpha:.3f}, gamma=2.0, label_smoothing=0.15")
 
-    # Create decision head: ImprovedGatedHead
-    # Why this instead of trees?
-    # - Simpler = easier to train and debug
-    # - Multi-scale processing (deep + wide paths)
-    # - BatchNorm for feature scaling
-    # - Focal Loss for severe imbalance
-    # - Proven architecture that converges reliably
+    # Create decision head: Simplified ImprovedGatedHead
+    # Anti-overfitting design:
+    # - Simpler architecture (single path, not multi-scale)
+    # - Very high dropout (0.5) at all layers
+    # - Feature dropout layer
+    # - Label smoothing in loss
     temp_head = ImprovedGatedHead(
         input_dim=rnn_dim + static_dim,
-        hidden_dim=256,  # Large capacity
-        dropout=0.3
+        hidden_dim=192,  # Reduced from 256 to prevent overfitting
+        dropout=0.5  # Much higher dropout
     ).to(DEVICE)
 
     # Initialize weights for better convergence
     temp_head.initialize_weights()
 
-    print(f"  [Stage 1] Using ImprovedGatedHead: Multi-scale with BatchNorm + Kaiming init")
+    print(f"  [Stage 1] Using Simplified ImprovedGatedHead: Single-path + Heavy Dropout (0.5)")
 
     full_optimizer = torch.optim.Adam(
         list(model.parameters()) + list(temp_head.parameters()),
-        lr=0.001,  # Lower initial LR for Focal Loss (more stable)
-        weight_decay=5e-5  # Moderate regularization
+        lr=0.0005,  # Lower LR to prevent rapid overfitting
+        weight_decay=1e-4  # Stronger weight decay
     )
 
     # Add learning rate scheduler
     # ReduceLROnPlateau - only reduce when stuck
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        full_optimizer, mode='max', factor=0.5, patience=4,
+        full_optimizer, mode='max', factor=0.5, patience=3,
         min_lr=1e-6, verbose=True
     )
 
@@ -474,17 +465,19 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     best_auc = 0
     best_state = None
     best_epoch = 0
-    patience = 8  # 8 eval intervals * 5 epochs = 40 epochs max wait
+    best_train_loss = float('inf')
+    patience = 6  # Reduced patience - stop earlier if not improving
     counter = 0
+    overfitting_counter = 0  # Track consecutive epochs of overfitting
 
-    print(f"  [Stage 1] Pre-training RNN with ImprovedGatedHead + Focal Loss")
+    print(f"  [Stage 1] Pre-training RNN with Simplified ImprovedGatedHead + Focal Loss")
     print(f"    RNN dim: {rnn_dim}, Static dim: {static_dim}, Total: {rnn_dim + static_dim}")
-    print(f"    Architecture: BatchNorm → Gate → Multi-scale (Deep+Wide) → Output")
-    print(f"    Loss: Focal Loss (better for severe imbalance)")
-    print(f"    Early stopping: patience={patience}")
-    print(f"    Learning rate: 0.001 (ReduceLROnPlateau, patience=4, factor=0.5)")
+    print(f"    Architecture: BatchNorm → Feature Dropout → Gate → Deep Encoder")
+    print(f"    Loss: Focal Loss + Label Smoothing (0.15)")
+    print(f"    Anti-overfitting: Dropout=0.5, Feature Dropout, Weight Decay=1e-4")
+    print(f"    Early stopping: patience={patience} (stops on val plateau OR overfitting)")
+    print(f"    Learning rate: 0.0005 (ReduceLROnPlateau, patience=3, factor=0.5)")
     print(f"    Mixed precision: Enabled (FP16/FP32 automatic)")
-    print(f"    Weight decay: 5e-5 | Dropout: 0.3 | Init: Kaiming")
 
     for epoch in range(epochs):
         model.train()
@@ -562,13 +555,24 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             print(f"Val AUPR: {auc_val:.4f} | LR: {current_lr:.6f} | Pred: {pred_mean:.3f}±{pred_std:.3f} | "
                   f"PredPos: {pred_pos_rate:.1%} vs TruePos: {true_pos_rate:.1%}")
 
+            # Detect severe overfitting (train loss very low but val not improving)
+            if avg_loss < 0.15 and auc_val < best_auc - 0.02:
+                overfitting_counter += 1
+                if overfitting_counter >= 2:
+                    print(f"    ⚠ Severe overfitting detected (train={avg_loss:.4f}, best val={best_auc:.4f}). Stopping early.")
+                    break
+            else:
+                overfitting_counter = 0
+
             if auc_val > best_auc:
                 best_auc = auc_val
                 best_state = copy.deepcopy(model.state_dict())
+                best_train_loss = avg_loss
                 counter = 0
             else:
                 counter += 1
                 if counter >= patience:
+                    print(f"    Early stopping at epoch {epoch+1} (val AUPR not improving)")
                     break
 
     model.load_state_dict(best_state)
