@@ -148,8 +148,8 @@ class SoftDecisionTree(nn.Module):
         # output: [batch_size]
         output = torch.matmul(leaf_probs, self.leaf_values)
 
-        # Apply sigmoid to get final probability
-        return torch.sigmoid(output).unsqueeze(-1)
+        # Return logits (no sigmoid - will use BCEWithLogitsLoss)
+        return output.unsqueeze(-1)
 
     def _compute_leaf_probabilities(self, node_probs):
         """
@@ -313,7 +313,7 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(full_optimizer, T_max=epochs, eta_min=1e-5)
 
     # Mixed precision training for better GPU utilization
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     best_auc = 0
     best_state = None
@@ -339,14 +339,14 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             full_optimizer.zero_grad()
 
             # Mixed precision forward pass
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 h = model(t_data)
                 combined = torch.cat([h, s_data], dim=1)
                 preds = temp_head(combined).squeeze(-1)
 
-                # Weighted BCE loss for class imbalance
+                # Weighted BCE loss for class imbalance (use BCEWithLogitsLoss for autocast safety)
                 weights = torch.where(labels == 1, pos_weight, 1.0).to(DEVICE)
-                loss = nn.BCELoss(weight=weights)(preds, labels)
+                loss = nn.BCEWithLogitsLoss(weight=weights)(preds, labels)
 
             # Mixed precision backward pass
             scaler.scale(loss).backward()
@@ -369,12 +369,14 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             model.eval()
             temp_head.eval()
             all_preds, all_lbls = [], []
-            with torch.no_grad(), torch.cuda.amp.autocast():
+            with torch.no_grad(), torch.amp.autocast('cuda'):
                 for t_data, labels, s_data in val_loader:
                     s_data = s_data.to(DEVICE)
                     h = model(t_data)
                     combined = torch.cat([h, s_data], dim=1)
-                    preds = temp_head(combined).squeeze(-1)
+                    logits = temp_head(combined).squeeze(-1)
+                    # Apply sigmoid to convert logits to probabilities
+                    preds = torch.sigmoid(logits)
                     all_preds.extend(preds.cpu().numpy())
                     all_lbls.extend(labels.cpu().numpy())
 
