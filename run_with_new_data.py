@@ -82,20 +82,38 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     from TBoostv2 import GatedDecisionHead
     import copy
 
+    # Calculate class weights for imbalanced data
+    all_labels = []
+    for _, labels, _ in train_loader:
+        all_labels.extend(labels.numpy())
+    all_labels = np.array(all_labels)
+    pos_count = np.sum(all_labels == 1)
+    neg_count = np.sum(all_labels == 0)
+    pos_weight = neg_count / (pos_count + 1e-6)
+
+    print(f"  [Stage 1] Class distribution: Pos={pos_count}, Neg={neg_count}, Pos_weight={pos_weight:.2f}")
+
     # Create head with CORRECT dimensions
     temp_head = GatedDecisionHead(input_dim=rnn_dim + static_dim).to(DEVICE)
     full_optimizer = torch.optim.Adam(
         list(model.parameters()) + list(temp_head.parameters()),
-        lr=0.001
+        lr=0.001,
+        weight_decay=1e-5  # L2 regularization
     )
+
+    # Add learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(full_optimizer, T_max=epochs, eta_min=1e-5)
 
     best_auc = 0
     best_state = None
-    patience = 6
+    best_epoch = 0
+    patience = 8  # 8 eval intervals * 5 epochs = 40 epochs max wait
     counter = 0
 
     print(f"  [Stage 1] Pre-training RNN with Gated Head")
     print(f"    RNN dim: {rnn_dim}, Static dim: {static_dim}, Total: {rnn_dim + static_dim}")
+    print(f"    Early stopping: patience={patience}")
+    print(f"    Learning rate: 0.001 -> 1e-5 (cosine annealing)")
 
     for epoch in range(epochs):
         model.train()
@@ -107,10 +125,24 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             h = model(t_data)
             combined = torch.cat([h, s_data], dim=1)
             preds = temp_head(combined).squeeze(-1)
-            loss = criterion(preds, labels)
+
+            # Weighted BCE loss for class imbalance
+            weights = torch.where(labels == 1, pos_weight, 1.0).to(DEVICE)
+            loss = nn.BCELoss(weight=weights)(preds, labels)
+
             full_optimizer.zero_grad()
             loss.backward()
+
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(
+                list(model.parameters()) + list(temp_head.parameters()),
+                max_norm=1.0
+            )
+
             full_optimizer.step()
+
+        # Step the learning rate scheduler
+        scheduler.step()
 
         if (epoch+1) % 5 == 0:
             model.eval()
@@ -128,7 +160,8 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             from sklearn.metrics import average_precision_score, roc_auc_score
             aupr = average_precision_score(all_lbls, all_preds)
             auc_val = aupr
-            print(f"    Epoch {epoch+1} Val AUPR: {auc_val:.4f}")
+            current_lr = scheduler.get_last_lr()[0]
+            print(f"    Epoch {epoch+1} Val AUPR: {auc_val:.4f} | LR: {current_lr:.6f}")
 
             if auc_val > best_auc:
                 best_auc = auc_val
@@ -237,9 +270,9 @@ def main(data_filepath):
         val_ds = EnhancedHybridDataset(val_p, temporal_feats, encoder, stats)
         test_ds = EnhancedHybridDataset(test_p_list, temporal_feats, encoder, stats)
 
-        train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, collate_fn=enhanced_collate_fn)
-        val_loader = DataLoader(val_ds, batch_size=32, shuffle=False, collate_fn=enhanced_collate_fn)
-        test_loader = DataLoader(test_ds, batch_size=32, shuffle=False, collate_fn=enhanced_collate_fn)
+        train_loader = DataLoader(train_ds, batch_size=64, shuffle=True, collate_fn=enhanced_collate_fn)
+        val_loader = DataLoader(val_ds, batch_size=64, shuffle=False, collate_fn=enhanced_collate_fn)
+        test_loader = DataLoader(test_ds, batch_size=64, shuffle=False, collate_fn=enhanced_collate_fn)
 
         # Stage 1: Train RNN
         print("\n  [Stage 1] Training RNN extractor...")
@@ -247,7 +280,7 @@ def main(data_filepath):
         print(f"    Global stats: {len(temporal_feats) * 5}")
         print(f"    Total static dim: {actual_static_dim}")
 
-        rnn = RNNFeatureExtractor(len(temporal_feats), hidden_dim=128).to(DEVICE)
+        rnn = RNNFeatureExtractor(len(temporal_feats), hidden_dim=256).to(DEVICE)
         opt = torch.optim.Adam(rnn.parameters(), lr=0.001)
 
         # Use new format-aware training function
@@ -263,9 +296,9 @@ def main(data_filepath):
         X_val, y_val = get_triple_features(rnn, val_loader)
         X_test, y_test = get_triple_features(rnn, test_loader)
 
-        expected_dims = len(temporal_feats) + actual_static_dim + 128
+        expected_dims = len(temporal_feats) + actual_static_dim + 256
         print(f"    Feature dimensions: {X_train.shape[1]} (expected: {expected_dims})")
-        print(f"      = {len(temporal_feats)} Last + {actual_static_dim} Enhanced Static + 128 RNN")
+        print(f"      = {len(temporal_feats)} Last + {actual_static_dim} Enhanced Static + 256 RNN")
 
         # Stage 3: Train XGBoost
         print("\n  [Stage 3] Training XGBoost...")
