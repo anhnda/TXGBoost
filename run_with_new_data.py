@@ -69,8 +69,86 @@ from TimeEmbedding import DEVICE
 
 
 # ==============================================================================
-# Soft Decision Tree - Differentiable Decision Tree for RNN Pre-training
+# Improved Decision Heads for RNN Pre-training
 # ==============================================================================
+
+class ImprovedGatedHead(nn.Module):
+    """
+    Improved Gated Decision Head - Simpler and more stable than tree-based approaches.
+
+    Key improvements over original GatedDecisionHead:
+    - LayerNorm for training stability
+    - Larger hidden dimensions for more capacity
+    - Skip connections for better gradient flow
+    - Multi-scale feature processing
+    """
+
+    def __init__(self, input_dim, hidden_dim=128, dropout=0.3):
+        super(ImprovedGatedHead, self).__init__()
+
+        # Input normalization
+        self.input_norm = nn.LayerNorm(input_dim)
+
+        # Feature selection gate (learns which features matter)
+        self.gate = nn.Sequential(
+            nn.Linear(input_dim, input_dim),
+            nn.LayerNorm(input_dim),
+            nn.Tanh(),  # Smoother than sigmoid
+            nn.Dropout(dropout * 0.5)
+        )
+
+        # Multi-scale processing
+        # Path 1: Deep narrow path
+        self.deep_path = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.LayerNorm(hidden_dim // 2),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+        )
+
+        # Path 2: Wide shallow path
+        self.wide_path = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim * 2),
+            nn.LayerNorm(hidden_dim * 2),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, hidden_dim // 2),
+        )
+
+        # Combine paths
+        self.combine = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+        )
+
+        # Final prediction (outputs logits)
+        self.output = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x):
+        # Normalize input
+        x = self.input_norm(x)
+
+        # Apply learned feature gate
+        gate = self.gate(x)
+        x_gated = x * gate
+
+        # Multi-scale processing
+        deep_out = self.deep_path(x_gated)
+        wide_out = self.wide_path(x_gated)
+
+        # Concatenate and combine
+        combined = torch.cat([deep_out, wide_out], dim=-1)
+        features = self.combine(combined)
+
+        # Output logits (no sigmoid - using BCEWithLogitsLoss)
+        return self.output(features)
+
 
 class SoftDecisionTree(nn.Module):
     """
@@ -288,29 +366,34 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
 
     print(f"  [Stage 1] Class distribution: Pos={pos_count}, Neg={neg_count}, Pos_weight={pos_weight:.2f}")
 
-    # Create STRONGER decision head: AdaptiveNeuralTree (ensemble of soft decision trees)
-    # This is much more powerful than GatedDecisionHead because:
-    # - Mimics XGBoost's tree structure explicitly
-    # - Uses feature attention for better feature selection
-    # - Ensemble of 3 trees for robustness
-    # - Depth 6 → 64 leaves per tree → high capacity
-    temp_head = AdaptiveNeuralTree(
+    # Create decision head: ImprovedGatedHead
+    # Why this instead of trees?
+    # - Simpler = easier to train and debug
+    # - Multi-scale processing (deep + wide paths)
+    # - LayerNorm for stability
+    # - Skip connections for gradient flow
+    # - Proven architecture that converges reliably
+    temp_head = ImprovedGatedHead(
         input_dim=rnn_dim + static_dim,
-        depth=2,  # 64 leaves per tree
-        num_trees=3,  # Ensemble of 3 trees
-        dropout=0.2
+        hidden_dim=256,  # Large capacity
+        dropout=0.3
     ).to(DEVICE)
 
-    print(f"  [Stage 1] Using AdaptiveNeuralTree: 3 trees × 64 leaves = 192 decision paths")
+    print(f"  [Stage 1] Using ImprovedGatedHead: Multi-scale (deep+wide) with LayerNorm")
 
     full_optimizer = torch.optim.Adam(
         list(model.parameters()) + list(temp_head.parameters()),
-        lr=0.001,
-        weight_decay=1e-5  # L2 regularization
+        lr=0.002,  # Slightly higher initial LR
+        weight_decay=1e-4  # Stronger regularization
     )
 
-    # Add learning rate scheduler
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(full_optimizer, T_max=epochs, eta_min=1e-5)
+    # Add learning rate scheduler with warmup
+    # Problem: Cosine drops too fast (0.001 -> 0.00001)
+    # Solution: ReduceLROnPlateau - only reduce when stuck
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        full_optimizer, mode='max', factor=0.5, patience=3,
+        min_lr=1e-5, verbose=True
+    )
 
     # Mixed precision training for better GPU utilization
     scaler = torch.amp.GradScaler('cuda')
@@ -321,16 +404,19 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     patience = 8  # 8 eval intervals * 5 epochs = 40 epochs max wait
     counter = 0
 
-    print(f"  [Stage 1] Pre-training RNN with AdaptiveNeuralTree (Differentiable Decision Forest)")
+    print(f"  [Stage 1] Pre-training RNN with ImprovedGatedHead")
     print(f"    RNN dim: {rnn_dim}, Static dim: {static_dim}, Total: {rnn_dim + static_dim}")
-    print(f"    Architecture: Feature Attention → 3 Soft Decision Trees (depth 6)")
+    print(f"    Architecture: Input Norm → Gate → Multi-scale (Deep+Wide) → Output")
     print(f"    Early stopping: patience={patience}")
-    print(f"    Learning rate: 0.001 -> 1e-5 (cosine annealing)")
+    print(f"    Learning rate: 0.002 (ReduceLROnPlateau with factor=0.5)")
     print(f"    Mixed precision: Enabled (FP16/FP32 automatic)")
+    print(f"    Weight decay: 1e-4 (stronger regularization)")
 
     for epoch in range(epochs):
         model.train()
         temp_head.train()
+        epoch_loss = 0.0
+        num_batches = 0
 
         for t_data, labels, s_data in train_loader:
             labels = labels.to(DEVICE)
@@ -362,8 +448,14 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             scaler.step(full_optimizer)
             scaler.update()
 
-        # Step the learning rate scheduler
-        scheduler.step()
+            # Track loss
+            epoch_loss += loss.item()
+            num_batches += 1
+
+        # Log training loss every epoch
+        avg_loss = epoch_loss / num_batches
+        if (epoch+1) % 5 == 0:
+            print(f"    Epoch {epoch+1} Train Loss: {avg_loss:.4f}", end=" | ")
 
         if (epoch+1) % 5 == 0:
             model.eval()
@@ -383,8 +475,12 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
             from sklearn.metrics import average_precision_score, roc_auc_score
             aupr = average_precision_score(all_lbls, all_preds)
             auc_val = aupr
-            current_lr = scheduler.get_last_lr()[0]
-            print(f"    Epoch {epoch+1} Val AUPR: {auc_val:.4f} | LR: {current_lr:.6f}")
+
+            # Step scheduler with validation metric (ReduceLROnPlateau)
+            scheduler.step(auc_val)
+
+            current_lr = full_optimizer.param_groups[0]['lr']
+            print(f"Val AUPR: {auc_val:.4f} | LR: {current_lr:.6f}")
 
             if auc_val > best_auc:
                 best_auc = auc_val
@@ -494,32 +590,27 @@ def main(data_filepath):
         test_ds = EnhancedHybridDataset(test_p_list, temporal_feats, encoder, stats)
 
         # ====================================================================
-        # GPU OPTIMIZATION CONFIGURATION
+        # OPTIMIZED DATALOADER CONFIGURATION
         # ====================================================================
-        # Problem: CPU usage 15.7%, GPU only 14% → CPU bottleneck!
-        # Solution: Optimize data pipeline and leverage GPU capacity
-        #
-        # Optimizations:
-        # 1. Batch size: 64 → 256 (4x larger, GPU has 24GB available)
-        # 2. num_workers: 6 for parallel data loading
-        # 3. pin_memory: True for faster CPU→GPU transfer
-        # 4. persistent_workers: Keeps workers alive between epochs
-        # 5. Mixed precision (AMP): FP16/FP32 for 2-3x speedup
-        #
-        # Expected: GPU usage → 60-80%, GPU memory → 8-12GB
+        # Balance between:
+        # - Large batches (GPU efficiency) vs Small batches (gradient quality)
+        # - Batch=128: Good compromise for both GPU utilization & learning
+        # - num_workers: 4 for parallel loading without overhead
+        # - pin_memory: Faster CPU→GPU transfer
+        # - persistent_workers: Keeps workers alive
         # ====================================================================
-        print(f"\n  GPU Optimization: Batch=256, Workers=6, AMP=Enabled")
+        print(f"\n  DataLoader: Batch=128, Workers=4, AMP=Enabled, pin_memory=True")
 
         train_loader = DataLoader(
-            train_ds, batch_size=256, shuffle=True, collate_fn=enhanced_collate_fn,
-            num_workers=6, pin_memory=True, persistent_workers=True
+            train_ds, batch_size=128, shuffle=True, collate_fn=enhanced_collate_fn,
+            num_workers=4, pin_memory=True, persistent_workers=True
         )
         val_loader = DataLoader(
-            val_ds, batch_size=256, shuffle=False, collate_fn=enhanced_collate_fn,
+            val_ds, batch_size=128, shuffle=False, collate_fn=enhanced_collate_fn,
             num_workers=4, pin_memory=True, persistent_workers=True
         )
         test_loader = DataLoader(
-            test_ds, batch_size=256, shuffle=False, collate_fn=enhanced_collate_fn,
+            test_ds, batch_size=128, shuffle=False, collate_fn=enhanced_collate_fn,
             num_workers=4, pin_memory=True, persistent_workers=True
         )
 
