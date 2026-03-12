@@ -296,7 +296,7 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     # - Depth 6 → 64 leaves per tree → high capacity
     temp_head = AdaptiveNeuralTree(
         input_dim=rnn_dim + static_dim,
-        depth=6,  # 64 leaves per tree
+        depth=2,  # 64 leaves per tree
         num_trees=3,  # Ensemble of 3 trees
         dropout=0.2
     ).to(DEVICE)
