@@ -210,6 +210,18 @@ class GatedDecisionHead:
     # Residual connections
 ```
 
+V3 Performance:
+
+Metric Comparison:
+----------------------------------------------------------------------------------------------------
+AUC             | Enhanced: 0.8624 ± 0.0050  |  Baseline: 0.8562 ± 0.0090  |  Improvement: +0.72%
+AUC-PR          | Enhanced: 0.6678 ± 0.0097  |  Baseline: 0.6584 ± 0.0174  |  Improvement: +1.43%
+Accuracy        | Enhanced: 0.8413 ± 0.0039  |  Baseline: 0.8279 ± 0.0039  |  Improvement: +1.63%
+Specificity     | Enhanced: 0.9245 ± 0.0068  |  Baseline: 0.9000 ± 0.0017  |  Improvement: +2.73%
+Precision       | Enhanced: 0.6540 ± 0.0161  |  Baseline: 0.5994 ± 0.0085  |  Improvement: +9.11%
+Recall          | Enhanced: 0.5309 ± 0.0128  |  Baseline: 0.5588 ± 0.0171  |  Improvement: -4.99%
+
+
 ### Categorical Encoding
 Automatic encoding of non-numeric features:
 
