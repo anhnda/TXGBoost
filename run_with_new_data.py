@@ -711,7 +711,7 @@ def main(data_filepath):
         rnn = train_rnn_extractor_new_format(
             rnn, train_loader, val_loader, nn.BCELoss(), opt,
             static_dim=actual_static_dim,
-            epochs=80
+            epochs=100
         )
 
         # Stage 2: Extract features
