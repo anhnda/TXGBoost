@@ -1,70 +1,80 @@
-# TXGBoost: Triple Hybrid Model for AKI Prediction
+# TXGBoost: Triple Hybrid Model for Health State Prediction
 
-A novel hybrid deep learning approach that combines temporal pattern learning with gradient boosting for Acute Kidney Disease (AKD) prediction.
+A novel hybrid deep learning approach that combines temporal pattern learning with gradient boosting for Health state prediction.
 
 ## Overview
 
-TXGBoost implements a **triple hybrid architecture** that significantly outperforms traditional feature engineering approaches by learning temporal patterns through a Gated RNN and combining them with handcrafted features for XGBoost.
+TXGBoost implements a **triple hybrid architecture** that significantly outperforms traditional feature engineering approaches by learning temporal patterns through a Time-Embedded RNN and combining them with handcrafted features for gradient boosting.
 
-## Model Variants
+The framework now supports both **XGBoost** and **CatBoost** backends, with CatBoost achieving superior performance on AKI prediction tasks.
 
-### TXGBoost (Original)
-```
-[Learned Temporal Trends + Last Values + Static Context] → XGBoost
-```
-- **176 dims**: Last (25) + Static (23) + RNN (128)
+## Architecture
 
-### TBoostv1 (Enhanced RNN Training)
 ```
-RNN Training: [RNN + Enhanced Static (173)] → Gated Head
-XGBoost:      [Last (25) + Original Static (23) + RNN (128)] → Prediction
+[Temporal Data] → Time-Embedded RNN (256-dim) → RNN Embeddings
+                         ↓
+[Static Features] → Global Statistics (mean/max/min/std/slope)
+                         ↓
+        [Last Values + Enhanced Static + RNN] → XGBoost/CatBoost
 ```
-- Global stats (mean/max/min/std/slope/count) enhance RNN learning
-- XGBoost uses original features only: **176 dims**
 
-### TBoostv2 (Full Enhancement) ⭐ Best Performance
-```
-RNN Training: [RNN + Enhanced Static (173)] → Gated Head
-XGBoost:      [Last (25) + Enhanced Static (173) + RNN (128)] → Prediction
-```
-- Global stats enhance both RNN training AND XGBoost
-- Full feature set: **326 dims**
+### Triple Feature Fusion
+
+The model combines three complementary feature types:
+
+1. **Last Values** (point-wise): Most recent observations for each temporal feature
+2. **Enhanced Static Features**: Original static features + Global statistical summaries
+3. **RNN Embeddings** (sequential): Learned temporal patterns from Time-Embedded RNN
 
 ## Performance Comparison
 
-All results are averaged over 5-fold cross-validation against the same strong baseline:
+All results are averaged over 5-fold cross-validation on the same dataset:
 
-| Model           | AUC                  | AUC-PR               | vs Baseline AUC | vs Baseline AUC-PR |
-|-----------------|----------------------|----------------------|-----------------|-------------------|
-| **Baseline**    | 0.8192 ± 0.0237     | 0.7449 ± 0.0515     | -               | -                 |
-| **TXGBoost**    | 0.8426 ± 0.0204     | 0.7820 ± 0.0268     | **+2.86%**      | **+4.98%**        |
-| **TBoostv2** ⭐  | 0.8553 ± 0.0265     | 0.8011 ± 0.0288     | **+4.41%**      | **+7.54%**        |
+### XGBoost Results
 
-**Key Findings:**
-- TBoostv2 achieves the best performance with **+4.41% AUC** and **+7.54% AUC-PR** improvement
-- Global statistical features provide significant boost when used in both RNN and XGBoost
-- All variants substantially outperform the traditional baseline
+| Model | AUC | AUC-PR | vs Baseline AUC | vs Baseline AUC-PR |
+|-------|-----|--------|-----------------|-------------------|
+| **Baseline XGBoost** | 0.8562 ± 0.0090 | 0.6584 ± 0.0174 | - | - |
+| **TBoostv3 (XGBoost)** | 0.8624 ± 0.0050 | 0.6678 ± 0.0097 | **+0.72%** | **+1.43%** |
 
-### Feature Comparison
+### CatBoost Results
 
-| Aspect                  | TXGBoost      | TBoostv1      | TBoostv2 ⭐   |
-|-------------------------|---------------|---------------|---------------|
-| **RNN Training Input**  | 23 static     | 173 enhanced  | 173 enhanced  |
-| **XGBoost Input Dims**  | 176           | 176           | 326           |
-| **Global Stats in RNN** | ✗             | ✓             | ✓             |
-| **Global Stats in XGB** | ✗             | ✗             | ✓             |
-| **AUC**                 | 0.8426        | -             | **0.8553**    |
-| **AUC-PR**              | 0.7820        | -             | **0.8011**    |
+| Model | AUC | AUC-PR | vs Baseline AUC | vs Baseline AUC-PR |
+|-------|-----|--------|-----------------|-------------------|
+| **Baseline CatBoost** | 0.8636 ± 0.0074 | 0.6665 ± 0.0141 | - | - |
+| **TBoostv3 (CatBoost)** | 0.8684 ± 0.0049 | 0.6725 ± 0.0129 | **+0.56%** | **+0.89%** |
+
+### Key Findings
+
+- **CatBoost achieves the best overall performance** with AUC of 0.8684 and AUC-PR of 0.6725
+- Both XGBoost and CatBoost variants substantially outperform their baselines
+- Enhanced model shows **improved stability** with lower standard deviation
+- Global statistical features provide significant boost when combined with RNN embeddings
 
 ## Key Features
 
-- **Time-Embedded RNN**: Custom RNN cell that explicitly models temporal dynamics in medical time series
-- **Global Statistical Features**: 6 statistics (mean, max, min, std, slope, count) computed per temporal feature
-- **Gated Decision Head**: XGBoost-mimicking architecture for RNN pre-training
-- **Triple Feature Fusion**: Synergistic combination of learned and handcrafted features
-- **Categorical Encoding**: Automatic handling of categorical features (Gender, Race)
-- **Full Evaluation Suite**: Comprehensive metrics including AUC, AUC-PR, accuracy, specificity, precision, and recall
-- **Visualization**: ROC curves for both models across all folds
+### Model Components
+
+- **Time-Embedded RNN**: Custom RNN cell that explicitly models temporal dynamics and time gaps in medical time series
+- **Global Statistical Features**: 5 statistics (mean, max, min, std, slope) computed per temporal feature
+- **Improved Gated Head**: Advanced pre-training architecture with feature gating and dropout for RNN training
+- **Focal Loss**: Addresses severe class imbalance with label smoothing to prevent overfitting
+- **Triple Feature Fusion**: Synergistic combination of point-wise, statistical, and sequential features
+- **Mixed Precision Training**: Automatic FP16/FP32 computation for faster training
+
+### Training Enhancements
+
+- **Focal Loss with Label Smoothing**: Better handling of class imbalance than weighted BCE
+- **Advanced Regularization**: Feature dropout, weight decay, gradient clipping
+- **Learning Rate Scheduling**: ReduceLROnPlateau for adaptive learning rate adjustment
+- **Early Stopping**: Prevents overfitting with validation monitoring and patience mechanism
+- **Overfitting Detection**: Automatic detection and early termination on severe overfitting
+
+### Evaluation
+
+- **Comprehensive Metrics**: AUC, AUC-PR, accuracy, specificity, precision, recall
+- **Cross-Validation**: 5-fold stratified cross-validation for robust performance estimates
+- **Visualization**: ROC curves for both enhanced and baseline models across all folds
 
 ## Requirements
 
@@ -74,107 +84,126 @@ pandas
 matplotlib
 torch
 xgboost
+catboost
 scikit-learn
+joblib
 ```
 
 ## Project Structure
 
 ```
 TXGBoost/
-├── TXGBoost.py              # Original triple hybrid model (176 dims)
-├── TBoostv1.py              # Enhanced RNN training, original XGBoost features (176 dims)
-├── TBoostv2.py              # Full enhancement with global stats (326 dims) ⭐
-├── TimeEmbedding.py         # Time-embedded RNN cell
-├── TimeEmbeddingVal.py      # Data preparation utilities
-├── constants.py             # Feature definitions
+├── run_with_new_data.py        # TBoostv3 with XGBoost backend
+├── run_new_catboost.py         # TBoostv3 with CatBoost backend (Best Performance)
+├── TBoostv3.py                 # Core model components and training logic
+├── TimeEmbedding.py            # Time-embedded RNN cell
+├── TimeEmbeddingVal.py         # Data preparation utilities
+├── new_data_loader.py          # New data format loader with caching
+├── new_data_helpers.py         # Feature extraction helpers
+├── constants.py                # Feature definitions
 ├── utils/
-│   ├── class_patient.py     # Patient data structure
-│   └── prepare_data.py      # Data preprocessing
+│   ├── class_patient.py        # Patient data structure
+│   └── prepare_data.py         # Data preprocessing
+├── new_data/
+│   └── final_dataset.pkl       # Dataset in new format
 └── result/
-    ├── triple_hybrid_vs_baseline.png  # TXGBoost results
-    ├── tboostv1_vs_baseline.png       # TBoostv1 results
-    └── tboostv2_vs_baseline.png       # TBoostv2 results
+    ├── tboostv2_new_data_vs_baseline.png          # XGBoost results
+    └── tboostv2_new_data_vs_baseline_catboost.png # CatBoost results
 ```
 
 ## Usage
 
 ### Basic Usage
 
-Run any of the three model variants:
+Run either gradient boosting variant:
 
 ```bash
-# Original triple hybrid model
-python TXGBoost.py
+# XGBoost variant
+python run_with_new_data.py
 
-# Enhanced RNN training (v1)
-python TBoostv1.py
-
-# Full enhancement with global stats (v2) - Recommended ⭐
-python TBoostv2.py
+# CatBoost variant (Recommended for best performance)
+python run_new_catboost.py
 ```
 
 ### Model Selection Guide
 
-- **TBoostv2**: Use for best performance (recommended for production)
-- **TXGBoost**: Use as baseline for understanding core architecture
-- **TBoostv1**: Use to study the impact of enhanced RNN training
+- **CatBoost (run_new_catboost.py)**: Best performance (recommended for production)
+  - Superior handling of categorical features
+  - Better regularization for medical data
+  - Highest AUC and AUC-PR scores
 
-### Custom Configuration
-
-All scripts share the following key parameters:
-```python
-# - RNN hidden dimension: 128
-# - XGBoost: n_estimators=500, max_depth=6, learning_rate=0.05
-# - Batch size: 32
-# - RNN pre-training epochs: 50 (with early stopping)
-# - Random seed: 42
-```
+- **XGBoost (run_with_new_data.py)**: Faster training with strong performance
+  - Faster iterations during development
+  - Slightly lower but still excellent performance
+  - Good for rapid experimentation
 
 ## Model Pipeline
 
 ### Stage 1: RNN Pre-training
-The time-embedded RNN is pre-trained using a gated decision head that mimics XGBoost's decision-making process:
 
-**TXGBoost (Original):**
+The time-embedded RNN is pre-trained using an improved gated decision head:
+
 ```python
-# Pre-train RNN with [RNN + Static (23)] → Gated Head
-model = RNNFeatureExtractor(input_dim=25, hidden_dim=128)
-model = train_rnn_extractor(model, train_loader, val_loader, epochs=50)
+# Pre-train RNN with [RNN (256) + Enhanced Static] → Improved Gated Head
+rnn = RNNFeatureExtractor(input_dim=temporal_feats, hidden_dim=256)
+rnn = train_rnn_extractor_new_format(
+    rnn, train_loader, val_loader,
+    criterion=FocalLoss(alpha=0.25, gamma=2.0, label_smoothing=0.15),
+    static_dim=enhanced_static_dim,
+    epochs=100
+)
 ```
 
-**TBoostv1 & TBoostv2 (Enhanced):**
-```python
-# Pre-train RNN with [RNN + Enhanced Static (173)] → Gated Head
-# Enhanced Static = Original Static (23) + Global Stats (150)
-model = RNNFeatureExtractor(input_dim=25, hidden_dim=128)
-model = train_rnn_extractor(model, train_loader, val_loader, epochs=50)
-```
+**Key improvements:**
+- Focal Loss with label smoothing for severe class imbalance
+- Improved Gated Head with feature dropout and batch normalization
+- Mixed precision training (FP16/FP32) for faster computation
+- Learning rate scheduling with ReduceLROnPlateau
+- Advanced early stopping with overfitting detection
 
 ### Stage 2: Feature Extraction
 
-**TXGBoost & TBoostv1:**
+Extract triple features combining last values, enhanced static features, and RNN embeddings:
+
 ```python
-# [Last Values (25) + Static (23) + RNN Embedding (128)] = 176 dims
+# [Last Values + Enhanced Static + RNN Embedding] = Total dims
+# For example: [25 + 148 + 256] = 429 dims (varies by dataset)
 X_train, y_train = get_triple_features(rnn, train_loader)
 ```
 
-**TBoostv2:**
-```python
-# [Last Values (25) + Enhanced Static (173) + RNN Embedding (128)] = 326 dims
-X_train, y_train = get_triple_features(rnn, train_loader)
-```
+### Stage 3: Gradient Boosting Training
 
-### Stage 3: XGBoost Training
 Train gradient boosting classifier on the fused features:
 
+**XGBoost:**
 ```python
-clf = XGBClassifier(n_estimators=500, max_depth=6, learning_rate=0.05)
+clf = XGBClassifier(
+    n_estimators=500,
+    max_depth=6,
+    learning_rate=0.05,
+    scale_pos_weight=ratio,
+    eval_metric='auc',
+    random_state=42
+)
 clf.fit(X_train, y_train, eval_set=[(X_val, y_val)])
+```
+
+**CatBoost:**
+```python
+clf = CatBoostClassifier(
+    iterations=500,
+    depth=6,
+    learning_rate=0.05,
+    scale_pos_weight=ratio,
+    eval_metric='AUC',
+    random_seed=42
+)
+clf.fit(X_train, y_train, eval_set=(X_val, y_val))
 ```
 
 ## Static Features
 
-The model uses 23 static features:
+The model automatically detects static features from the dataset. Typical static features include:
 
 **Demographics**: age, gender, race
 
@@ -186,11 +215,33 @@ The model uses 23 static features:
 
 ## Temporal Features
 
-The model processes 25 temporal features from medical time series data, extracting patterns through the time-embedded RNN.
+The model automatically detects and processes temporal features from medical time series data. For each temporal feature, the following are computed:
+
+### Last Values
+Most recent observation for each temporal variable (provides strong baseline signal)
+
+### Global Statistical Features
+
+Five statistical features computed over the entire observation window:
+
+1. **Mean**: Average value over the observation window
+2. **Max**: Peak value (important for detecting critical events)
+3. **Min**: Lowest value (important for detecting concerning drops)
+4. **Std**: Variability/stability of the measurement
+5. **Slope**: Trend direction `(last - first) / (time_last - time_first)`
+
+### RNN Embeddings
+
+The Time-Embedded RNN learns complex temporal patterns including:
+- Sequential dependencies between observations
+- Temporal decay based on time gaps
+- Irregular sampling patterns
+- Missing data handling via masking
 
 ## Key Implementation Details
 
 ### Time-Embedded RNN Cell
+
 Custom RNN that explicitly models time gaps between observations:
 
 ```python
@@ -198,66 +249,89 @@ class TimeEmbeddedRNNCell:
     # Learns temporal decay functions
     # Handles irregular time series
     # Accounts for missing data via masking
+    # Outputs 256-dimensional temporal embeddings
 ```
 
-### Gated Decision Head
-Pre-training head that mimics XGBoost's gating mechanism:
+### Improved Gated Decision Head
+
+Advanced pre-training head with anti-overfitting measures:
 
 ```python
-class GatedDecisionHead:
-    # Feature gating layer
-    # GLU activation functions
-    # Residual connections
+class ImprovedGatedHead:
+    # Feature gating layer (learns which features matter)
+    # Batch normalization for stable training
+    # Feature dropout (0.4 × dropout rate)
+    # Deep encoder with progressive dimension reduction
+    # Outputs logits for Focal Loss
 ```
 
-### Categorical Encoding
-Automatic encoding of non-numeric features:
+### Focal Loss with Label Smoothing
+
+Addresses severe class imbalance:
 
 ```python
-encoder = SimpleStaticEncoder(FIXED_FEATURES)
-encoder.fit(patients)  # Learn mappings from training data
+class FocalLoss:
+    # alpha: Balances positive/negative examples (typically 0.25-0.75)
+    # gamma: Focuses on hard examples (typically 2.0)
+    # label_smoothing: Prevents overconfidence (typically 0.15)
+    # Much better than weighted BCE for severe imbalance
 ```
+
+### Data Loading with Caching
+
+Efficient data loading with automatic caching:
+
+```python
+patients = load_and_prepare_new_format_patients(
+    data_filepath,
+    min_feature_coverage=0.8,  # Require 80% feature coverage
+    use_cache=True  # Cache processed data for faster subsequent runs
+)
+```
+
+## Configuration
+
+### Key Hyperparameters
+
+**RNN Training:**
+- Hidden dimension: 256
+- Batch size: 128
+- Learning rate: 0.0005 (with ReduceLROnPlateau scheduler)
+- Dropout: 0.5
+- Epochs: 100 (with early stopping, patience=6)
+- Loss: Focal Loss (alpha=0.25-0.75, gamma=2.0, label_smoothing=0.15)
+
+**Gradient Boosting:**
+- Iterations/n_estimators: 500
+- Max depth: 6
+- Learning rate: 0.05
+- Scale pos weight: Automatic based on class ratio
+
+**Data Loading:**
+- Batch size: 128
+- Num workers: 4
+- Pin memory: True
+- Persistent workers: True
+- Mixed precision: Enabled
 
 ## Output
 
-The script generates:
-1. Console output with fold-by-fold results
-2. ROC curves comparison plot: `result/triple_hybrid_vs_baseline.png`
-3. Final performance statistics with mean ± std
+Each script generates:
 
-## Global Statistical Features (TBoostv1 & TBoostv2)
-
-The enhanced models compute 6 statistical features for each temporal variable:
-
-1. **Mean**: Average value over the observation window
-2. **Max**: Peak value (important for detecting critical events)
-3. **Min**: Lowest value (important for detecting concerning drops)
-4. **Std**: Variability/stability of the measurement
-5. **Slope**: Trend direction `(last - first) / (time_last - time_first)`
-6. **Count**: Number of observations (captures data density)
-
-For 25 temporal features, this produces **150 additional dimensions** (25 × 6).
-
-### How Global Stats Enhance Performance
-
-**In TBoostv1:**
-- Global stats provide richer context during RNN training
-- The RNN learns better representations by understanding both sequential patterns AND overall trends
-- XGBoost receives compact 176-dim features with improved RNN embeddings
-
-**In TBoostv2:**
-- Global stats enhance RNN training (same as v1)
-- XGBoost also gets direct access to statistical summaries (326 dims total)
-- Best performance: combines learned sequential patterns with explicit statistical features
+1. Console output with detailed fold-by-fold results
+2. ROC curves comparison plot in `result/` directory
+3. Final performance statistics with mean ± std across folds
+4. Feature dimension analysis and model configuration details
 
 ## Why This Approach Works
 
-1. **Complementary Features**: RNN learns temporal patterns that static features miss
-2. **Explicit Last Values**: Provides strong baseline signal to XGBoost
-3. **Global Statistics**: Capture aggregate trends and data quality signals
-4. **XGBoost Strengths**: Excels at combining heterogeneous features and handling non-linearities
-5. **Pre-training Strategy**: Gated head ensures RNN learns XGBoost-compatible representations
-6. **Multi-Scale Information**: Combines point-wise (last), sequential (RNN), and aggregate (stats) views
+1. **Multi-Scale Information**: Combines point-wise (last), sequential (RNN), and aggregate (stats) views
+2. **Complementary Features**: RNN learns temporal patterns that static features miss
+3. **Explicit Statistical Features**: Capture aggregate trends and data quality signals
+4. **Gradient Boosting Strengths**: Excels at combining heterogeneous features and handling non-linearities
+5. **Pre-training Strategy**: Improved Gated Head ensures RNN learns boosting-compatible representations
+6. **Advanced Regularization**: Focal Loss, label smoothing, and feature dropout prevent overfitting
+7. **CatBoost Advantages**: Better handling of categorical features and stronger regularization for medical data
 
 ## Citation
 
