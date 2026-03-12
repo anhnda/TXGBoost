@@ -68,6 +68,202 @@ import torch.nn as nn
 from TimeEmbedding import DEVICE
 
 
+# ==============================================================================
+# Soft Decision Tree - Differentiable Decision Tree for RNN Pre-training
+# ==============================================================================
+
+class SoftDecisionTree(nn.Module):
+    """
+    Soft Decision Tree (SDT) - A fully differentiable decision tree.
+
+    Key advantages over GatedDecisionHead:
+    - Explicit tree structure mimics XGBoost's decision trees
+    - Soft routing allows gradients to flow through all paths
+    - Hierarchical feature interactions through tree levels
+    - Stronger inductive bias for tabular data
+
+    Architecture:
+    - Internal nodes: Linear transformation + Sigmoid (soft split)
+    - Leaf nodes: Learned output values
+    - Forward pass: Soft routing probability × leaf values
+    """
+
+    def __init__(self, input_dim, depth=5, dropout=0.2):
+        """
+        Args:
+            input_dim: Input feature dimension
+            depth: Tree depth (depth=5 → 32 leaves, depth=6 → 64 leaves)
+            dropout: Dropout rate for regularization
+        """
+        super(SoftDecisionTree, self).__init__()
+        self.depth = depth
+        self.num_leaves = 2 ** depth
+        self.num_internal_nodes = 2 ** depth - 1
+
+        # Feature normalization for better training stability
+        self.feature_norm = nn.LayerNorm(input_dim)
+
+        # Internal nodes: Each node learns a linear decision function
+        # Node i decides: sigmoid(W_i @ x + b_i) → left vs right
+        self.internal_weights = nn.Parameter(
+            torch.randn(self.num_internal_nodes, input_dim) * 0.1
+        )
+        self.internal_biases = nn.Parameter(
+            torch.zeros(self.num_internal_nodes)
+        )
+
+        # Leaf nodes: Each leaf has a learned output value
+        self.leaf_values = nn.Parameter(
+            torch.randn(self.num_leaves) * 0.1
+        )
+
+        # Temperature for soft routing (learnable)
+        self.temperature = nn.Parameter(torch.ones(1) * 5.0)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        """
+        Args:
+            x: [batch_size, input_dim]
+        Returns:
+            output: [batch_size, 1] predictions in [0, 1]
+        """
+        batch_size = x.size(0)
+
+        # Normalize input features
+        x = self.feature_norm(x)
+        x = self.dropout(x)
+
+        # Calculate routing probabilities for all internal nodes
+        # node_logits: [batch_size, num_internal_nodes]
+        node_logits = torch.matmul(x, self.internal_weights.t()) + self.internal_biases
+        node_probs = torch.sigmoid(node_logits * torch.abs(self.temperature))
+
+        # Calculate probability of reaching each leaf via soft routing
+        # leaf_probs: [batch_size, num_leaves]
+        leaf_probs = self._compute_leaf_probabilities(node_probs)
+
+        # Weighted combination of leaf values
+        # output: [batch_size]
+        output = torch.matmul(leaf_probs, self.leaf_values)
+
+        # Apply sigmoid to get final probability
+        return torch.sigmoid(output).unsqueeze(-1)
+
+    def _compute_leaf_probabilities(self, node_probs):
+        """
+        Compute probability of reaching each leaf through soft routing.
+
+        For a binary tree:
+        - Node i's left child: 2*i + 1
+        - Node i's right child: 2*i + 2
+        - P(reach leaf j) = product of routing decisions along path
+
+        Args:
+            node_probs: [batch_size, num_internal_nodes] - prob of going RIGHT at each node
+        Returns:
+            leaf_probs: [batch_size, num_leaves]
+        """
+        batch_size = node_probs.size(0)
+        leaf_probs = torch.ones(batch_size, self.num_leaves, device=node_probs.device)
+
+        # For each leaf, trace path from root and accumulate probabilities
+        for leaf_idx in range(self.num_leaves):
+            path = self._get_path_to_leaf(leaf_idx)
+
+            for node_idx, direction in path:
+                if direction == 'right':
+                    # Going right: use node probability
+                    leaf_probs[:, leaf_idx] *= node_probs[:, node_idx]
+                else:
+                    # Going left: use 1 - node probability
+                    leaf_probs[:, leaf_idx] *= (1 - node_probs[:, node_idx])
+
+        return leaf_probs
+
+    def _get_path_to_leaf(self, leaf_idx):
+        """
+        Get the path from root to a specific leaf.
+
+        Returns:
+            path: List of (node_idx, direction) tuples
+        """
+        # Leaf indexing: leaf_idx ranges from 0 to num_leaves-1
+        # Internal nodes: 0 to num_internal_nodes-1
+        # Convert leaf_idx to position in complete binary tree
+        node_idx = leaf_idx + self.num_internal_nodes
+
+        path = []
+        while node_idx > 0:
+            parent_idx = (node_idx - 1) // 2
+            if node_idx % 2 == 1:
+                direction = 'left'
+            else:
+                direction = 'right'
+            path.append((parent_idx, direction))
+            node_idx = parent_idx
+
+        return list(reversed(path))
+
+
+class AdaptiveNeuralTree(nn.Module):
+    """
+    Adaptive Neural Tree - Enhanced decision tree with adaptive depth and attention.
+
+    Improvements over basic SoftDecisionTree:
+    - Feature attention mechanism for better feature selection
+    - Adaptive routing with confidence scores
+    - Ensemble of multiple trees for robustness
+    """
+
+    def __init__(self, input_dim, depth=5, num_trees=3, dropout=0.2):
+        super(AdaptiveNeuralTree, self).__init__()
+        self.num_trees = num_trees
+
+        # Feature attention: Learn which features are important
+        self.feature_attention = nn.Sequential(
+            nn.Linear(input_dim, input_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(input_dim // 2, input_dim),
+            nn.Sigmoid()
+        )
+
+        # Ensemble of soft decision trees
+        self.trees = nn.ModuleList([
+            SoftDecisionTree(input_dim, depth=depth, dropout=dropout)
+            for _ in range(num_trees)
+        ])
+
+        # Tree weighting: Learn to weight different trees
+        self.tree_weights = nn.Parameter(torch.ones(num_trees) / num_trees)
+
+    def forward(self, x):
+        """
+        Args:
+            x: [batch_size, input_dim]
+        Returns:
+            output: [batch_size, 1] predictions
+        """
+        # Apply feature attention
+        attention = self.feature_attention(x)
+        x_attended = x * attention
+
+        # Get predictions from all trees
+        tree_outputs = []
+        for tree in self.trees:
+            tree_out = tree(x_attended)
+            tree_outputs.append(tree_out)
+
+        # Weighted ensemble
+        tree_outputs = torch.cat(tree_outputs, dim=-1)  # [batch_size, num_trees]
+        weights = torch.softmax(self.tree_weights, dim=0)
+        output = torch.matmul(tree_outputs, weights).unsqueeze(-1)
+
+        return output
+
+
 def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, optimizer,
                                      static_dim, epochs=50):
     """
@@ -79,7 +275,6 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     rnn_dim = model.rnn_cell.hidden_dim
 
     # Import here to avoid circular dependency
-    from TBoostv2 import GatedDecisionHead
     import copy
 
     # Calculate class weights for imbalanced data
@@ -93,8 +288,21 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
 
     print(f"  [Stage 1] Class distribution: Pos={pos_count}, Neg={neg_count}, Pos_weight={pos_weight:.2f}")
 
-    # Create head with CORRECT dimensions
-    temp_head = GatedDecisionHead(input_dim=rnn_dim + static_dim).to(DEVICE)
+    # Create STRONGER decision head: AdaptiveNeuralTree (ensemble of soft decision trees)
+    # This is much more powerful than GatedDecisionHead because:
+    # - Mimics XGBoost's tree structure explicitly
+    # - Uses feature attention for better feature selection
+    # - Ensemble of 3 trees for robustness
+    # - Depth 6 → 64 leaves per tree → high capacity
+    temp_head = AdaptiveNeuralTree(
+        input_dim=rnn_dim + static_dim,
+        depth=6,  # 64 leaves per tree
+        num_trees=3,  # Ensemble of 3 trees
+        dropout=0.2
+    ).to(DEVICE)
+
+    print(f"  [Stage 1] Using AdaptiveNeuralTree: 3 trees × 64 leaves = 192 decision paths")
+
     full_optimizer = torch.optim.Adam(
         list(model.parameters()) + list(temp_head.parameters()),
         lr=0.001,
@@ -110,8 +318,9 @@ def train_rnn_extractor_new_format(model, train_loader, val_loader, criterion, o
     patience = 8  # 8 eval intervals * 5 epochs = 40 epochs max wait
     counter = 0
 
-    print(f"  [Stage 1] Pre-training RNN with Gated Head")
+    print(f"  [Stage 1] Pre-training RNN with AdaptiveNeuralTree (Differentiable Decision Forest)")
     print(f"    RNN dim: {rnn_dim}, Static dim: {static_dim}, Total: {rnn_dim + static_dim}")
+    print(f"    Architecture: Feature Attention → 3 Soft Decision Trees (depth 6)")
     print(f"    Early stopping: patience={patience}")
     print(f"    Learning rate: 0.001 -> 1e-5 (cosine annealing)")
 
@@ -297,8 +506,9 @@ def main(data_filepath):
         X_test, y_test = get_triple_features(rnn, test_loader)
 
         expected_dims = len(temporal_feats) + actual_static_dim + 256
-        print(f"    Feature dimensions: {X_train.shape[1]} (expected: {expected_dims})")
+        print(f"    Enhanced feature dimensions: {X_train.shape[1]} (expected: {expected_dims})")
         print(f"      = {len(temporal_feats)} Last + {actual_static_dim} Enhanced Static + 256 RNN")
+        print(f"    Enhanced samples: Train={len(y_train)}, Val={len(y_val)}, Test={len(y_test)}")
 
         # Stage 3: Train XGBoost
         print("\n  [Stage 3] Training XGBoost...")
@@ -342,6 +552,9 @@ def main(data_filepath):
         y_tr_b = df_train_enc["akd"]
         X_te_b = df_test_enc.drop(columns=["akd"]).fillna(0)
         y_te_b = df_test_enc["akd"]
+
+        print(f"    Baseline feature dimensions: {X_tr_b.shape[1]} (standard features without RNN)")
+        print(f"    Baseline samples: Train={len(y_tr_b)}, Test={len(y_te_b)}")
 
         xgb_base = XGBClassifier(
             n_estimators=500, max_depth=6, learning_rate=0.05,
