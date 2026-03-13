@@ -786,7 +786,8 @@ def main(data_filepath):
 
         # Evaluate hybrid model
         pred_df = tabular_model.predict(test_df)
-        y_prob = pred_df['target_probability'].values
+        # For binary classification, use target_1_probability (probability of positive class)
+        y_prob = pred_df['target_1_probability'].values
         y_pred = (y_prob > 0.5).astype(int)
 
         tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
@@ -848,7 +849,8 @@ def main(data_filepath):
 
         # Evaluate baseline model
         pred_base_df = baseline_model.predict(test_base_df)
-        y_prob_b = pred_base_df['target_probability'].values
+        # For binary classification, use target_1_probability (probability of positive class)
+        y_prob_b = pred_base_df['target_1_probability'].values
         y_pred_b = (y_prob_b > 0.5).astype(int)
 
         tn, fp, _, _ = confusion_matrix(y_te_b, y_pred_b).ravel()
