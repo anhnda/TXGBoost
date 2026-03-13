@@ -786,8 +786,27 @@ def main(data_filepath):
 
         # Evaluate hybrid model
         pred_df = tabular_model.predict(test_df)
-        # For binary classification, use target_1_probability (probability of positive class)
-        y_prob = pred_df['target_1_probability'].values
+        # Debug: Check available columns
+        print(f"    Prediction columns: {pred_df.columns.tolist()}")
+
+        # For binary classification, extract probability of positive class
+        # Try different column naming conventions
+        if 'target_1_probability' in pred_df.columns:
+            y_prob = pred_df['target_1_probability'].values
+        elif '1_probability' in pred_df.columns:
+            y_prob = pred_df['1_probability'].values
+        elif 'target_probability' in pred_df.columns:
+            y_prob = pred_df['target_probability'].values
+        else:
+            # Fallback: find any column with 'probability' and use it
+            prob_cols = [col for col in pred_df.columns if 'probability' in col.lower()]
+            if len(prob_cols) > 0:
+                y_prob = pred_df[prob_cols[-1]].values  # Use last probability column (usually positive class)
+            else:
+                # If no probability column, use prediction column directly
+                y_prob = pred_df[pred_df.columns[-1]].values
+            print(f"    Using column: {prob_cols[-1] if prob_cols else pred_df.columns[-1]}")
+
         y_pred = (y_prob > 0.5).astype(int)
 
         tn, fp, fn, tp = confusion_matrix(y_test, y_pred).ravel()
@@ -849,8 +868,24 @@ def main(data_filepath):
 
         # Evaluate baseline model
         pred_base_df = baseline_model.predict(test_base_df)
-        # For binary classification, use target_1_probability (probability of positive class)
-        y_prob_b = pred_base_df['target_1_probability'].values
+
+        # For binary classification, extract probability of positive class
+        # Try different column naming conventions
+        if 'target_1_probability' in pred_base_df.columns:
+            y_prob_b = pred_base_df['target_1_probability'].values
+        elif '1_probability' in pred_base_df.columns:
+            y_prob_b = pred_base_df['1_probability'].values
+        elif 'target_probability' in pred_base_df.columns:
+            y_prob_b = pred_base_df['target_probability'].values
+        else:
+            # Fallback: find any column with 'probability' and use it
+            prob_cols = [col for col in pred_base_df.columns if 'probability' in col.lower()]
+            if len(prob_cols) > 0:
+                y_prob_b = pred_base_df[prob_cols[-1]].values  # Use last probability column (usually positive class)
+            else:
+                # If no probability column, use prediction column directly
+                y_prob_b = pred_base_df[pred_base_df.columns[-1]].values
+
         y_pred_b = (y_prob_b > 0.5).astype(int)
 
         tn, fp, _, _ = confusion_matrix(y_te_b, y_pred_b).ravel()
