@@ -772,7 +772,7 @@ def main(data_filepath):
             num_trees=20,
             chain_trees=True,
             tree_dropout=0.1,
-            Share_head_weights=True
+            share_head_weights=True
         )
 
         tabular_model = TabularModel(
