@@ -135,7 +135,6 @@ def main():
         try:
             tabpfn = TabPFNClassifier(
                 device='cuda',  # Use 'cuda' if GPU is available
-                no_preprocess_mode=False  # Let TabPFN handle preprocessing
             )
 
             tabpfn.fit(X_train_sample, y_train_sample)
