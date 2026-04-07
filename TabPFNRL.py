@@ -1,15 +1,18 @@
 """
-REINFORCEMENT LEARNING V4: Improved TabPFN RL
+REINFORCEMENT LEARNING V5: Fixed Normal Variance for Z
 
-Key improvements over V3:
-1. Adaptive RL Guard: Revert if RL degrades pretrained performance
-2. Smaller Latent Dim (12) + Larger Hidden Dim (64): Better signal-to-noise
-3. Better Per-Sample Rewards: Precision-weighted AUPR proxy instead of global AUPR bonus
-4. Feature Selection: Mutual information top-K before TabPFN
-5. Cosine LR Schedule: Gentler optimization
-6. Ensemble: Blend pretrained + RL features for robustness
-7. TabPFN n_estimators=16: More internal ensembling
-8. Shorter RL (40 epochs): Gains plateau early, avoid degradation
+Key change from V4: Policy network outputs ONLY the mean.
+Variance is fixed at 1.0 (scaled by temperature for exploration).
+This removes the noisy learned std that RL couldn't optimize.
+
+Other improvements carried from V4:
+- Adaptive RL guard (revert if degraded)
+- Smaller latent_dim=12, larger hidden_dim=64
+- Per-sample precision-weighted rewards
+- Feature selection (MI top-K)
+- Cosine LR schedule
+- Pretrained/RL ensemble blend
+- TabPFN n_estimators=16
 """
 
 import pandas as pd
@@ -90,7 +93,7 @@ FIXED_FEATURES = [
 ]
 
 # ==============================================================================
-# 1. Static Encoder (unchanged)
+# 1. Static Encoder
 # ==============================================================================
 
 class SimpleStaticEncoder:
@@ -131,7 +134,7 @@ class SimpleStaticEncoder:
         return vec
 
 # ==============================================================================
-# 2. Dataset (unchanged)
+# 2. Dataset
 # ==============================================================================
 
 class HybridDataset(Dataset):
@@ -212,15 +215,23 @@ def hybrid_collate_fn(batch):
     return temporal_batch, torch.tensor(label_list, dtype=torch.float32), torch.stack(static_list)
 
 # ==============================================================================
-# 3. RNN Policy Network (same architecture, different dims used)
+# 3. RNN Policy Network — FIXED UNIT VARIANCE
 # ==============================================================================
 
 class RNNPolicyNetwork(nn.Module):
+    """
+    RNN policy that outputs ONLY the mean.
+    Variance is fixed at 1.0 (no learned log_std).
+    During stochastic mode: z = mean + temperature * eps, eps ~ N(0, I)
+    During deterministic mode: z = mean
+    """
     def __init__(self, input_dim, hidden_dim, latent_dim, time_dim=32):
         super().__init__()
         self.rnn_cell = TimeEmbeddedRNNCell(input_dim, hidden_dim, time_dim)
+
+        # Only mean — no fc_logstd!
         self.fc_mean = nn.Linear(hidden_dim, latent_dim)
-        self.fc_logstd = nn.Linear(hidden_dim, latent_dim)
+
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
 
@@ -232,18 +243,19 @@ class RNNPolicyNetwork(nn.Module):
 
         h = self.rnn_cell(times, values, masks, lengths)
         mean = self.fc_mean(h)
-        log_std = self.fc_logstd(h)
-        log_std = torch.clamp(log_std, min=-20, max=2)
-        std = torch.exp(log_std) * temperature
-
-        policy_dist = dist.Normal(mean, std)
 
         if deterministic:
             z = mean
             log_prob = None
         else:
-            z = policy_dist.rsample()
-            log_prob = policy_dist.log_prob(z).sum(dim=-1)
+            # Fixed unit variance, scaled by temperature
+            std = temperature  # scalar, not learned
+            eps = torch.randn_like(mean)
+            z = mean + std * eps
+
+            # Log prob under N(mean, std^2 * I)
+            # log p(z|mean) = -0.5 * sum((z - mean)^2 / std^2) - 0.5*d*log(2*pi*std^2)
+            log_prob = -0.5 * ((eps ** 2).sum(dim=-1) + mean.shape[-1] * math.log(2 * math.pi * std ** 2))
 
         return z, log_prob, mean
 
@@ -265,7 +277,7 @@ class SupervisedHead(nn.Module):
         return torch.sigmoid(self.fc3(x))
 
 # ==============================================================================
-# 4. Enhanced Pretraining (unchanged from V3)
+# 4. Enhanced Pretraining
 # ==============================================================================
 
 def pretrain_rnn_enhanced(policy_net, train_loader, val_loader, epochs=50):
@@ -340,7 +352,7 @@ def pretrain_rnn_enhanced(policy_net, train_loader, val_loader, epochs=50):
     return policy_net
 
 # ==============================================================================
-# 5. Feature Extraction (enriched)
+# 5. Feature Extraction (enriched temporal stats)
 # ==============================================================================
 
 def extract_enriched_features_and_logprobs(policy_net, loader, deterministic=False, temperature=1.0):
@@ -385,7 +397,6 @@ def extract_enriched_features_and_logprobs(policy_net, loader, deterministic=Fal
                         patient_std.append(np.std(valid_vals) if len(valid_vals) > 1 else 0.0)
                         patient_min.append(np.min(valid_vals))
                         patient_max.append(np.max(valid_vals))
-                        # Slope: last - first (trend)
                         if len(valid_vals) > 1:
                             patient_slope.append(valid_vals[-1] - valid_vals[0])
                         else:
@@ -413,7 +424,6 @@ def extract_enriched_features_and_logprobs(policy_net, loader, deterministic=Fal
             slope_vals_arr = np.array(batch_slope_vals)
             s_np = s_data.numpy()
 
-            # Enriched: [Static + Last + Mean + Std + Min + Max + Slope + Z]
             combined = np.hstack([
                 s_np, last_vals_arr, mean_vals_arr, std_vals_arr,
                 min_vals_arr, max_vals_arr, slope_vals_arr, z_np
@@ -432,26 +442,21 @@ def extract_enriched_features_and_logprobs(policy_net, loader, deterministic=Fal
     return features, labels, log_probs
 
 # ==============================================================================
-# 6. Feature Selection Helper
+# 6. Feature Selection
 # ==============================================================================
 
 def select_features_mi(X_train, y_train, X_val_or_test, top_k=80):
-    """Select top-K features by mutual information"""
-    # Handle NaN/Inf
     X_train_clean = np.nan_to_num(X_train, nan=0.0, posinf=0.0, neginf=0.0)
-
     mi = mutual_info_classif(X_train_clean, y_train, random_state=42, n_neighbors=5)
     top_indices = np.argsort(mi)[-top_k:]
-    top_indices = np.sort(top_indices)  # Keep original order
-
+    top_indices = np.sort(top_indices)
     return X_train[:, top_indices], X_val_or_test[:, top_indices], top_indices
 
 # ==============================================================================
-# 7. Adaptive RL Training with Better Rewards
+# 7. Adaptive RL Training
 # ==============================================================================
 
 def evaluate_with_tabpfn(policy_net, train_loader, val_loader, tabpfn_params, feat_indices=None):
-    """Evaluate current policy with TabPFN, return AUPR"""
     policy_net.eval()
     with torch.no_grad():
         X_train, y_train, _ = extract_enriched_features_and_logprobs(
@@ -483,16 +488,9 @@ def train_policy_adaptive_rl(
     update_tabpfn_every=5,
     top_k_features=80,
 ):
-    """
-    Adaptive RL: stops if performance drops below pretrained baseline.
-    Uses per-sample precision-weighted rewards.
-    Cosine LR schedule.
-    """
-
-    # --- Save pre-RL state and evaluate baseline ---
+    # Save pre-RL state and evaluate baseline
     pre_rl_state = copy.deepcopy(policy_net.state_dict())
 
-    # Get feature indices from pretrained features
     policy_net.eval()
     with torch.no_grad():
         X_train_pre, y_train_pre, _ = extract_enriched_features_and_logprobs(
@@ -502,7 +500,6 @@ def train_policy_adaptive_rl(
             policy_net, val_loader, deterministic=True
         )
 
-    # Feature selection on pretrained features
     _, _, feat_indices = select_features_mi(X_train_pre, y_train_pre, X_val_pre, top_k=top_k_features)
 
     pre_rl_auc, pre_rl_aupr = evaluate_with_tabpfn(
@@ -510,7 +507,7 @@ def train_policy_adaptive_rl(
     )
     print(f"  [Pre-RL Baseline] AUC: {pre_rl_auc:.4f} | AUPR: {pre_rl_aupr:.4f}")
 
-    # --- Setup optimizer with cosine schedule ---
+    # Optimizer with cosine schedule
     optimizer = torch.optim.Adam(policy_net.parameters(), lr=5e-5)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
@@ -520,66 +517,58 @@ def train_policy_adaptive_rl(
     patience_counter = 0
     degradation_counter = 0
 
-    print(f"  [Adaptive RL] AUPR-focused, will revert if degraded...")
+    print(f"  [Adaptive RL] Fixed-variance policy, AUPR-focused...")
 
     tabpfn_model = None
 
     for epoch in range(epochs):
-        # Conservative temperature
+        # Temperature for exploration (now directly controls std since variance is fixed)
         temperature = max(0.3, 0.7 - epoch / (epochs * 0.8))
 
         policy_net.train()
 
-        # Sample features with exploration
+        # Sample with exploration
         X_train, y_train, log_probs_train = extract_enriched_features_and_logprobs(
             policy_net, train_loader, deterministic=False, temperature=temperature
         )
 
-        # Apply feature selection
         X_train_sel = X_train[:, feat_indices]
 
-        # Train/update TabPFN
         if epoch % update_tabpfn_every == 0 or tabpfn_model is None:
             tabpfn_model = TabPFNClassifier(**tabpfn_params)
             tabpfn_model.fit(X_train_sel, y_train)
 
-        # --- Per-sample precision-weighted rewards (AUPR proxy) ---
+        # Per-sample precision-weighted rewards
         y_train_proba = tabpfn_model.predict_proba(X_train_sel)[:, 1]
 
-        # Reward design: heavily reward correct positive predictions (drives AUPR)
         rewards = np.where(
             (y_train == 1) & (y_train_proba > 0.5),
-            y_train_proba * 2.0,                          # True positive with high confidence
+            y_train_proba * 2.0,
             np.where(
                 (y_train == 1),
-                y_train_proba * 0.5,                      # Positive but low prediction
+                y_train_proba * 0.5,
                 np.where(
                     y_train_proba < 0.5,
-                    (1 - y_train_proba),                   # True negative
-                    (1 - y_train_proba) * 0.5              # False positive penalty
+                    (1 - y_train_proba),
+                    (1 - y_train_proba) * 0.5
                 )
             )
         )
 
-        # Normalize rewards
         rewards_tensor = torch.tensor(rewards, dtype=torch.float32).to(DEVICE)
         rewards_tensor = (rewards_tensor - rewards_tensor.mean()) / (rewards_tensor.std() + 1e-8)
 
-        # Policy gradient update
+        # Policy gradient — simpler now with fixed variance
         log_probs_train = log_probs_train.to(DEVICE)
         policy_loss = -(log_probs_train * rewards_tensor).mean()
 
-        # Very small entropy bonus
-        entropy_bonus = 0.0005 * log_probs_train.mean()
-        total_loss = policy_loss - entropy_bonus
-
         optimizer.zero_grad()
-        total_loss.backward()
+        policy_loss.backward()
         torch.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=0.3)
         optimizer.step()
         scheduler.step()
 
-        # --- Validation every 5 epochs ---
+        # Validation
         if (epoch + 1) % 5 == 0:
             val_auc, val_aupr = evaluate_with_tabpfn(
                 policy_net, train_loader, val_loader, tabpfn_params, feat_indices
@@ -597,13 +586,12 @@ def train_policy_adaptive_rl(
             else:
                 patience_counter += 1
 
-                # Check if we're degrading below pre-RL baseline
                 if val_aupr < pre_rl_aupr - 0.005:
                     degradation_counter += 1
                     if degradation_counter >= 3:
                         print(f"    RL is degrading below pretrained baseline. Reverting.")
                         policy_net.load_state_dict(pre_rl_state)
-                        return policy_net, feat_indices, True  # reverted flag
+                        return policy_net, feat_indices, True
                 else:
                     degradation_counter = 0
 
@@ -611,7 +599,6 @@ def train_policy_adaptive_rl(
                     print(f"    Early stopping at epoch {epoch+1}")
                     break
 
-    # Load best RL state (only if it improved over pre-RL)
     if best_val_aupr > pre_rl_aupr:
         policy_net.load_state_dict(best_state)
         print(f"  [Adaptive RL] Best AUPR: {best_val_aupr:.4f} (improved over pre-RL: {pre_rl_aupr:.4f})")
@@ -622,12 +609,12 @@ def train_policy_adaptive_rl(
         return policy_net, feat_indices, True
 
 # ==============================================================================
-# 8. Main Execution
+# 8. Main
 # ==============================================================================
 
 def main():
     print("="*80)
-    print("RL POLICY V4 (Adaptive + Better Rewards) TabPFN")
+    print("RL POLICY V5 (Fixed Variance + Adaptive) TabPFN")
     print("="*80)
 
     patients = load_and_prepare_patients()
@@ -664,7 +651,6 @@ def main():
         val_loader = DataLoader(val_ds, batch_size=32, shuffle=False, collate_fn=hybrid_collate_fn)
         test_loader = DataLoader(test_ds, batch_size=32, shuffle=False, collate_fn=hybrid_collate_fn)
 
-        # KEY CHANGE: smaller latent_dim=12, larger hidden_dim=64
         latent_dim = 12
         policy_net = RNNPolicyNetwork(
             input_dim=len(temporal_feats),
@@ -673,7 +659,6 @@ def main():
             time_dim=32
         ).to(DEVICE)
 
-        # TabPFN with more estimators
         tabpfn_params = {
             'device': 'cuda' if torch.cuda.is_available() else 'cpu',
             'n_estimators': 16,
@@ -682,10 +667,10 @@ def main():
         # STEP 1: Enhanced Pretraining
         policy_net = pretrain_rnn_enhanced(policy_net, train_loader, val_loader, epochs=50)
 
-        # Save pretrained state for potential ensemble
+        # Save pretrained state
         pretrained_state = copy.deepcopy(policy_net.state_dict())
 
-        # STEP 2: Adaptive RL Fine-tuning
+        # STEP 2: Adaptive RL
         policy_net, feat_indices, was_reverted = train_policy_adaptive_rl(
             policy_net,
             train_loader,
@@ -699,12 +684,11 @@ def main():
         if was_reverted:
             reverted_folds.append(fold)
 
-        # STEP 3: Final Evaluation with Ensemble (pretrained + RL blend)
+        # STEP 3: Final Evaluation with ensemble blend
         print("\n  [Final Test Evaluation]")
         policy_net.eval()
 
         with torch.no_grad():
-            # RL features
             X_train_rl, y_train_final, _ = extract_enriched_features_and_logprobs(
                 policy_net, train_loader, deterministic=True
             )
@@ -712,7 +696,6 @@ def main():
                 policy_net, test_loader, deterministic=True
             )
 
-        # If not reverted, also get pretrained features for ensemble
         if not was_reverted:
             pretrained_net = RNNPolicyNetwork(
                 input_dim=len(temporal_feats),
@@ -731,19 +714,15 @@ def main():
                     pretrained_net, test_loader, deterministic=True
                 )
 
-            # Blend: 0.5 * pretrained + 0.5 * RL (only the Z part differs)
-            # The static/temporal stats are the same, so blending mostly affects Z
             X_train_final = 0.5 * X_train_pre + 0.5 * X_train_rl
             X_test_final = 0.5 * X_test_pre + 0.5 * X_test_rl
         else:
             X_train_final = X_train_rl
             X_test_final = X_test_rl
 
-        # Apply feature selection
         X_train_sel = X_train_final[:, feat_indices]
         X_test_sel = X_test_final[:, feat_indices]
 
-        # Final TabPFN
         final_tabpfn = TabPFNClassifier(**tabpfn_params)
         final_tabpfn.fit(X_train_sel, y_train_final)
 
@@ -764,11 +743,10 @@ def main():
 
         print(f"  RL Test AUC: {fold_auc:.4f} | Test AUPR: {fold_aupr:.4f}")
 
-    # Plot
     ax1.plot([0, 1], [0, 1], 'k--', lw=1)
     ax1.set_xlabel('FPR')
     ax1.set_ylabel('TPR')
-    ax1.set_title('ROC Curves (RL V4)')
+    ax1.set_title('ROC Curves (RL V5 - Fixed Variance)')
     ax1.legend(fontsize=8)
 
     ax2.bar(range(10), metrics_rl['auc_pr'], alpha=0.7, label='AUPR')
@@ -779,7 +757,7 @@ def main():
 
     plt.tight_layout()
     os.makedirs('result', exist_ok=True)
-    plt.savefig('result/tabpfn_rl_v4.png', dpi=150)
+    plt.savefig('result/tabpfn_rl_v5.png', dpi=150)
     plt.close()
 
     print("\n" + "="*80)
