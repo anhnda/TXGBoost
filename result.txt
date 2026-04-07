@@ -1,0 +1,7 @@
+Classifier,Method,AUC (Mean ± SD),AUC-PR (Mean ± SD)
+CatBoost,Baseline,0.8109±0.0362,0.7385±0.0460
+,RL Policy,0.8499±0.0294,0.7875±0.0497
+XGBoost,Baseline,0.8121±0.0357,0.7400±0.0402
+,RL Policy,0.8397±0.0240,0.7724±0.0391
+TabPFN,Baseline,0.8557±0.0267,0.8027±0.0253
+,RL Policy,0.8655±0.0136,0.8112±0.0203

@@ -71,7 +71,7 @@ def main():
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
-    for fold, (train_full, test_p) in enumerate(trainTestPatients(patients, seed=xseed)):
+    for fold, (train_full, test_p) in enumerate(trainTestPatients(patients,k=10, seed=xseed)):
         print(f"\n--- Fold {fold} ---")
 
         # Extract features: Last Values + Static

@@ -1,0 +1,884 @@
+%Version 3 October 2023
+% See section 11 of the User Manual for version history
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%                                                                 %%
+%% Please do not use \input{...} to include other tex files.       %%
+%% Submit your LaTeX manuscript as one .tex document.              %%
+%%                                                                 %%
+%% All additional figures and files should be attached             %%
+%% separately and not embedded in the \TeX\ document itself.       %%
+%%                                                                 %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%\documentclass[referee,sn-basic]{sn-jnl}% referee option is meant for double line spacing
+
+%%=======================================================%%
+%% to print line numbers in the margin use lineno option %%
+%%=======================================================%%
+
+%%\documentclass[lineno,sn-basic]{sn-jnl}% Basic Springer Nature Reference Style/Chemistry Reference Style
+
+%%======================================================%%
+%% to compile with pdflatex/xelatex use pdflatex option %%
+%%======================================================%%
+
+%%\documentclass[pdflatex,sn-basic]{sn-jnl}% Basic Springer Nature Reference Style/Chemistry Reference Style
+
+
+%%Note: the following reference styles support Namedate and Numbered referencing. By default the style follows the most common style. To switch between the options you can add or remove Numbered in the optional parenthesis. 
+%%The option is available for: sn-basic.bst, sn-vancouver.bst, sn-chicago.bst%  
+ 
+%%\documentclass[sn-nature]{sn-jnl}% Style for submissions to Nature Portfolio journals
+%%\documentclass[sn-basic]{sn-jnl}% Basic Springer Nature Reference Style/Chemistry Reference Style
+\documentclass[sn-mathphys-num]{sn-jnl}% Math and Physical Sciences Numbered Reference Style 
+%%\documentclass[sn-mathphys-ay]{sn-jnl}% Math and Physical Sciences Author Year Reference Style
+%%\documentclass[sn-aps]{sn-jnl}% American Physical Society (APS) Reference Style
+%%\documentclass[sn-vancouver,Numbered]{sn-jnl}% Vancouver Reference Style
+%%\documentclass[sn-apa]{sn-jnl}% APA Reference Style 
+%%\documentclass[sn-chicago]{sn-jnl}% Chicago-based Humanities Reference Style
+
+%%%% Standard Packages
+%%<additional latex packages if required can be included here>
+
+\usepackage{graphicx}%
+\usepackage{multirow}%
+\usepackage{amsmath,amssymb,amsfonts}%
+\usepackage{amsthm}%
+\usepackage{mathrsfs}%
+\usepackage[title]{appendix}%
+\usepackage{xcolor}%
+\usepackage{textcomp}%
+\usepackage{manyfoot}%
+\usepackage{booktabs}%
+\usepackage{algorithm}%
+\usepackage{algorithmicx}%
+\usepackage{algpseudocode}%
+\usepackage{listings}%
+
+
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{subfig}
+
+
+%%%%
+
+%%%%%=============================================================================%%%%
+%%%%  Remarks: This template is provided to aid authors with the preparation
+%%%%  of original research articles intended for submission to journals published 
+%%%%  by Springer Nature. The guidance has been prepared in partnership with 
+%%%%  production teams to conform to Springer Nature technical requirements. 
+%%%%  Editorial and presentation requirements differ among journal portfolios and 
+%%%%  research disciplines. You may find sections in this template are irrelevant 
+%%%%  to your work and are empowered to omit any such section if allowed by the 
+%%%%  journal you intend to submit to. The submission guidelines and policies 
+%%%%  of the journal take precedence. A detailed User Manual is available in the 
+%%%%  template package for technical guidance.
+%%%%%=============================================================================%%%%
+
+%% as per the requirement new theorem styles can be included as shown below
+\theoremstyle{thmstyleone}%
+\newtheorem{theorem}{Theorem}%  meant for continuous numbers
+%%\newtheorem{theorem}{Theorem}[section]% meant for sectionwise numbers
+%% optional argument [theorem] produces theorem numbering sequence instead of independent numbers for Proposition
+\newtheorem{proposition}[theorem]{Proposition}% 
+%%\newtheorem{proposition}{Proposition}% to get separate numbers for theorem and proposition etc.
+
+\theoremstyle{thmstyletwo}%
+\newtheorem{example}{Example}%
+\newtheorem{remark}{Remark}%
+
+\theoremstyle{thmstylethree}%
+\newtheorem{definition}{Definition}%
+
+\raggedbottom
+%%\unnumbered% uncomment this for unnumbered level heads
+
+\begin{document}
+
+\title[PREDKIT]{PREDKIT: A comprehensive pipeline for predicting the risk of acute kidney injury of diabetic ketoacidosis patients
+}
+
+%%=============================================================%%
+%% GivenName	-> \fnm{Joergen W.}
+%% Particle	-> \spfx{van der} -> surname prefix
+%% FamilyName	-> \sur{Ploeg}
+%% Suffix	-> \sfx{IV}
+%% \author*[1,2]{\fnm{Joergen W.} \spfx{van der} \sur{Ploeg} 
+%%  \sfx{IV}}\email{iauthor@gmail.com}
+%%=============================================================%%
+
+\author[1]{\fnm{Nguyen H.} \sur{Quang}}\email{quangnd@soict.hust.edu.vn}
+\equalcont{These authors contributed equally to this work.}
+
+\author[1]{\fnm{Bui H.} \sur{Tu}}\email{ bhtu.work@gmail.com}
+\equalcont{These authors contributed equally to this work.}
+
+\author*[1]{\fnm{Nguyen D.} \sur{Anh}}\email{anhnd@soict.hust.edu.vn}
+
+
+\affil[1]{\orgdiv{School of Information and Communication Technology}, \orgname{Hanoi University of Science and Technology}, \orgaddress{\street{No. 1 Dai Co Viet}, \postcode{100000}, \state{Hanoi}, \country{Vietnam}}}
+
+
+
+%%==================================%%
+%% Sample for unstructured abstract %%
+%%==================================%%
+
+\abstract{Predicting the risk of  Akute Kidney Injury (AKI) in Diabetic Ketoacidosis (DKA) patients is essential for early intervention and treatment, helping minimize negative effects.
+Several risk factors of developing AKI for DKA patients have been investigated over the past decade, including older age, increased glucose, serum uric acid, white blood, etc.
+In previous studies, models have been applied to predict the risk of AKI in DKA patients using logistic regression or machine learning algorithms.
+However, there is no study carefully considering all aspects of data utilization, the power of deep learning models, and the explanation of the output on important features.
+
+Therefore, in this paper, we propose a pilepile PREDKIT to predict the risk of AKI in DKA patients during their intensive care unit (ICU) stay that covers all aspects. PREDKIT contains three stages: i) Preparing data that selects suitable features and preprocessing for high-quality data, ii) Building models by conducting a wide range of models from multiple tabular-based to time series-based deep. These models are trained to predict if a DKA patient will develop AKI within the next 7 days after ICU admission, and iii) Explaining models to calculate SHAP value to interpret the prediction of the model on which features affect the predicted AKI.
+
+The models are evaluated based on the commonly used measure AUC. 
+The final results show that the TabPFN model outperforms other models with an AUC-ROC of 0.83.
+We also analyze the top features from the interpretation module, showing matching with the literature.
+}
+
+%%================================%%
+%% Sample for structured abstract %%
+%%================================%%
+
+% \abstract{\textbf{Purpose:} The abstract serves both as a general introduction to the topic and as a brief, non-technical summary of the main results and their implications. The abstract must not include subheadings (unless expressly permitted in the journal's Instructions to Authors), equations or citations. As a guide the abstract should not exceed 200 words. Most journals do not set a hard limit however authors are advised to check the author instructions for the journal they are submitting to.
+% 
+% \textbf{Methods:} The abstract serves both as a general introduction to the topic and as a brief, non-technical summary of the main results and their implications. The abstract must not include subheadings (unless expressly permitted in the journal's Instructions to Authors), equations or citations. As a guide the abstract should not exceed 200 words. Most journals do not set a hard limit however authors are advised to check the author instructions for the journal they are submitting to.
+% 
+% \textbf{Results:} The abstract serves both as a general introduction to the topic and as a brief, non-technical summary of the main results and their implications. The abstract must not include subheadings (unless expressly permitted in the journal's Instructions to Authors), equations or citations. As a guide the abstract should not exceed 200 words. Most journals do not set a hard limit however authors are advised to check the author instructions for the journal they are submitting to.
+% 
+% \textbf{Conclusion:} The abstract serves both as a general introduction to the topic and as a brief, non-technical summary of the main results and their implications. The abstract must not include subheadings (unless expressly permitted in the journal's Instructions to Authors), equations or citations. As a guide the abstract should not exceed 200 words. Most journals do not set a hard limit however authors are advised to check the author instructions for the journal they are submitting to.}
+
+\keywords{Diabetic Ketoacidosis, Akute Kidney Injury prediction, TabPFN, GRANDE, SHAP values
+}
+
+%%\pacs[JEL Classification]{D8, H51}
+
+%%\pacs[MSC Classification]{35A01, 65L10, 65L12, 65L20, 65L70}
+
+\maketitle
+
+
+\abstract{Predicting the risk of  Akute Kidney Injury (AKI) in Diabetic Ketoacidosis (DKA) patients is essential for early intervention and treatment, helping minimize negative effects. Several risk factors of developing AKI for DKA patients have been investigated over the past decade, including older age, increased glucose, serum uric acid, white blood, etc. In previous studies, models have been applied to predict the risk of AKI in DKA patients using logistic regression or machine learning algorithms. However, there is no study carefully considering all aspects of data utilization, the power of deep learning models, and the explanation of the important features.
+
+Therefore, in this paper, we propose a pilepile PREDKIT to predict the risk of AKI in DKA patients during their intensive care unit (ICU) stay that covers all aspects. PREDKIT contains three stages: i) Preparing data that selects suitable features and preprocessing for high-quality data, ii) Building models by conducting a wide range of models from multiple tabular-based to time series-based deep. These models are trained to predict if a DKA patient will develop AKI within the next 7 days after ICU admission, and iii) Explaining the top features that affect the predicted AKI using SHAP values derived from the models.
+
+The models are evaluated based on the commonly used measure AUC. The final results show that the TabPFN model outperforms other models with an AUC-ROC of 0.83. We also analyze the top features from the interpretation module, demonstrating alignment with the literature.
+}
+
+%%================================%%
+%% Sample for structured abstract %%
+%%================================%%
+
+% \abstract{\textbf{Purpose:} The abstract serves both as a general introduction to the topic and as a brief, non-technical summary of the main results and their implications. The abstract must not include subheadings (unless expressly permitted in the journal's Instructions to Authors), equations or citations. As a guide the abstract should not exceed 200 words. Most journals do not set a hard limit however authors are advised to check the author instructions for the journal they are submitting to.
+% 
+% \textbf{Methods:} The abstract serves both as a general introduction to the topic and as a brief, non-technical summary of the main results and their implications. The abstract must not include subheadings (unless expressly permitted in the journal's Instructions to Authors), equations or citations. As a guide the abstract should not exceed 200 words. Most journals do not set a hard limit however authors are advised to check the author instructions for the journal they are submitting to.
+% 
+% \textbf{Results:} The abstract serves both as a general introduction to the topic and as a brief, non-technical summary of the main results and their implications. The abstract must not include subheadings (unless expressly permitted in the journal's Instructions to Authors), equations or citations. As a guide the abstract should not exceed 200 words. Most journals do not set a hard limit however authors are advised to check the author instructions for the journal they are submitting to.
+% 
+% \textbf{Conclusion:} The abstract serves both as a general introduction to the topic and as a brief, non-technical summary of the main results and their implications. The abstract must not include subheadings (unless expressly permitted in the journal's Instructions to Authors), equations or citations. As a guide the abstract should not exceed 200 words. Most journals do not set a hard limit however authors are advised to check the author instructions for the journal they are submitting to.}
+
+\keywords{Diabetic ketoacidosis, Akute kidney injury prediction, Machine learning models, TabPFN, SHAP values
+}
+
+%%\pacs[JEL Classification]{D8, H51}
+
+%%\pacs[MSC Classification]{35A01, 65L10, 65L12, 65L20, 65L70}
+
+\maketitle
+
+\section{Introduction}
+\label{sec1}
+Diabetic ketoacidosis (DKA) is a metabolic complication of diabetes mellitus (DM), caused by insulin deficiency and increased counter-regulatory hormones.
+This results in the body not converting enough sugar into energy and requiring to metabolize triglycerides.
+Overtime, this process produces free fatty acids (FFA) which are converted into ketone bodies in the liver.
+The evaluation of FFAs exacerbates insulin resistance and hyperglycemia, creating a malignant cycle \cite{dka-info}.
+%In Vietnam, the number of diabetes ketoacidosis patients were reported at 3.53 million in 2017 \cite{vn-dka-3.5-2019} and were predicted to rise to 6.3 million in 2045 \cite{vn-dka-predict-6.3-2045}.
+%However, the actual number was doubled in the past 6 years to 7 million people in 2023 \cite{vn-dka-7-2023}.
+%Vietnamese Ministry of Health acknowledge that DKA is in top 3 of the most non-communicable diseases \cite{vn-dka-predict-6.3-2045}.
+%It is worth noting that in 7 million patients, 55\% developed complications 34\% of which is cardiovascular diseases; 39.5\% had eyes complications; 24\% had kidney complications \cite{vn-dka-7-2023}.
+A study conducted in Australia and New Zealand of 8533 DKA patients illustrated that the rate of DKA admission to intensive care unit (ICU) has increased five-fold over the past decade \cite{aus+nz-dka-icu-increase}.
+This makes complications of diabetic ketoacidosis more common, especially acute kidney injury (AKI).
+
+AKI is a common complication of hospitalized patients, with a high mortality rate.
+It occurs in approximately 30-50\% of ICU patients.
+AKI is characterized as a sudden worsening of the kidney's blood-filtering function, usually caused by a buildup of waste in the blood that prevents the kidneys from balancing the body's electrolytes.
+This complication can develop in just a few hours or a few days.
+In most cases, it occurs within 48 hours but can last up to 7 days.
+AKI can cause serious complications such as chronic kidney disease or damage to other organs in the body such as the brain, heart, and lungs.
+Often when acute kidney injury is detected, it has left severe sequelae due to waste accumulation in the blood affecting organs in the body, increasing mortality, treatment time, and cost \cite{kdigo-aki-guideline}.
+In addition, due to damage to the kidneys caused by AKI, patients face a greater susceptibility of disease recurrence, especially in patients with underlying diseases that put pressure on the kidneys such as DKA patients.
+Therefore, predicting AKI in advance is an urgent issue in improving patient care, allowing doctors to intervene promptly to stop disease progression.
+
+Recently, machine learning models have been applied to predict AKI with prominent results \citep{xgboost-aki-dka}. However, these studies have not considered carefully the preparation data and testing wide range of models. For example,  \citep{xgboost-aki-dka} used some features that are not available during the real treatment process such as the patient's lethality rate or continuous renal replacement therapy status of the patients which indicates the patient is already in the serious stage of acute kidney injury. Also, the steps for processing missing values are unknown, and there is no evaluation for other kinds of models using time-series information. The explanation of the models for the prediction is not considered.
+
+In this study, we develop a full pipeline namely PREDKIT for predicting AKI based on clinical and biological data from the MIMIC-IV database, from preparing data, building models, and explaining models. For preparing, we first consider the static features used in current models which require us to delve into the MIMIC-IV database to gain a comprehensive understanding of its data structure including the structure of each table, the relationship between tables, and how MIMIC-IV stores data. Also, it is important to remove indicators that may cause data leakage and add indicators commonly observed in DKA-ICU patients that were ignored in previous studies. To support testing time-series models, we design and implement a data structure that can accommodate patient metrics' changes over time.
+To accomplish this, we chose to save the indicators in a JSON-like structure so a data preprocessing pipeline was built to convert data from tabular form to JSON-like format.
+
+For building models, we aim to replicate the AKI tabular-based prediction model in DKA-ICU patients that had been performed in previous studies to ensure that the models in the old study and the new models are evaluated on the same data set.
+Then we evaluate and compare the predictive ability of different models in predicting acute kidney injury in DKA-ICU patients.
+The models compared include XGBoost (the best model in previous studies), new deep learning models with tabular data, and deep learning models with time series data.
+
+For explaining models, we aim to extract top most important features of the best model and verify whether they match with the literature. By applying our pipeline to previous work, the performance can be improved about 1\%. We also discovered that TabPFN is the most suitable model for predicting AKI rather than XGBoost (\citep{xgboost-aki-dka}) with more than 1\% improvement. These results suggest that our pipeline is prominent to apply to predicting AKI to support further clinical treatments.
+
+
+
+
+%\textit{\color{red} Usually, the introduction part should declare the main contribution of the paper. So that the reviewers (readers) can have an overview of the work.}
+
+%=============================================================================%
+\section{Related work}
+\label{sec:related_work}
+
+Several studies have explored the prediction of acute kidney injury in critical care settings, providing valuable insights into the development of predictive models and methodologies. The standardized criteria for detecting AKI, serving as a foundational framework for AKI prediction studies, is proposed with the KDIGO guidelines \cite{kdigo-aki-guideline}. The definition of AKI provided by KDIGO is based on the changes in serum creatinine (SCr) and urine output. 
+
+Although the KDIGO guidelines provide a standardized definition of AKI, upon detecting AKI, the damage has already occurred due to either high levels of creatinine or accumulation of waste products in the blood.
+The need for early prediction of AKI is demanded to prevent further complications and improve patient outcomes.
+Hence, it is necessary to develop a predictive model that can detect the risk of AKI before the serious consequences occur.
+
+By analyzing the AKI data, there are many studies have identified some risk factors related to AKI, which can be used as potential features for machine learning models. For example, age, blood glucose levels, serum protein levels \cite{orban2014incidence}, white blood cell count, elevated anion gap levels, T1DM duration \cite{yang2021acute}, diabetic ketoacidosis \cite{hang2024blood,chen2020incidence, ahmed2022relationship}.
+
+In more recent studies, the researchers have been applied machine learning algorithms to predict AKI \cite{monogram-aki-dka,xgboost-aki-dka}. In general clinical and biological features, including biological indicators such as creatinine, urea, glucose, etc., and clinical indicators such as blood pressure, heart rate, etc., are used as input for models and produce prominent results.
+
+However, the study did not provide a detailed process of extracting the features used in the model, making it difficult to replicate the results.
+The authors also use some features that are not available during real treatment process such as the patient's lethality rate or continuous renal replacement therapy status of the patients which indicates the patient is already in a serious stage of acute kidney injury. These features cause data leakage with the model, leading to inaccurate assessments of part of the data. Therefore, there is a need for a pipeline for carefully handling both data and model aspects.
+
+
+
+
+%While other studies struggled with the subtle nature of AKI, T. Fan et al. \cite{monogram-aki-dka} has developed a nomogram to predict the risk of acute kidney injury for DKA-ICU patients.
+%This has shed light for the following researches as ICU patients got monitored more frequently than general patients, which could provide more accurate and abundant data for the prediction model.
+%On the flip side, the study used a deprecated definition of AKI and an older MIMIC version, leading falsely labeled AKI patients and small dataset.
+%Their best model, achieved an AUC of 0.747, which is a promising result but still has room for improvement.
+%One of my proposed upgrades is to use the latest MIMIC-IV database and the most recent definition of AKI to improve the model's accuracy.
+
+%In addition, the model uses some unreasonable indicators which were not available before the development of AKI including mortality rate, interventions specific to acute kidney injury.
+%These features cause data leakage with the model, leading to inaccurate assessments with part of the data.
+
+%DKA is a serious complication of diabetes that can significantly impact renal function and lead to acute kidney injury. Early recognition and prompt management of DKA are vital to prevent the development of AKI and other complications.
+%That is why, several studies have been carried out to predict the risk of AKI in DKA patients aiming to improve patient outcomes and reduce the burden of AKI on healthcare systems.
+%Many studies have made significant advances in predicting AKI in DKA-ICU patients using mainly tabular-based machine learning models.
+%These studies shed light on a new direction for predicting the risk of developing acute kidney injury for DKA-ICU patients alone rather than for all ICU-admitted patients.
+
+%Several studies have explored the prediction of acute kidney injury in critical care settings, providing valuable insights into the development of predictive models and methodologies.
+% Firstly, the KDIGO guidelines \cite{kdigo-aki-guideline} offer standardized criteria for detecting AKI, serving as a foundational framework for AKI prediction studies.
+% The definition of AKI provided by KDIGO is based on the changes in serum creatinine (SCr) and urine output, which are described as patients who satisfy at least one of the criteria in Equations \ref{eq:scr1}, \ref{eq:scr2} and \ref{eq:urine_volume}.
+
+% \begin{equation}
+%     \text{ Increase in SCr by } \geq 0.3 \text{ mg/dL } \text{ within 48 hours}
+%     \label{eq:scr1}
+% \end{equation}
+
+% \begin{equation}
+%     \text{ Increase in SCr to } \geq 1.5 \times \text{ baseline }
+%     \label{eq:scr2}
+% \end{equation}
+% In equation \ref{eq:scr2}, the baseline is known or presumed to have occurred within the prior 7 days.
+
+% \begin{equation}
+%     \text{ Urine volume } \le 0.5 \text{ ml/kg/h for 6 hours}
+%     \label{eq:urine_volume}
+% \end{equation}
+
+%Although the KDIGO guidelines provide a standardized definition of AKI, upon detecting AKI, the damage has already occurred due to either high levels of creatinine or accumulation of waste products in the blood.
+%And the need for early prediction of AKI is demanding to prevent further complications and improve patient outcomes.
+%That is why we needed to develop a predictive model that can detect the risk of AKI before the serious consequences occur.
+
+%While other studies struggled with the subtle nature of AKI, T. Fan et al. \cite{monogram-aki-dka} has developed a nomogram to predict the risk of acute kidney injury for DKA-ICU patients.
+%This has shed light for the following researches as ICU patients got monitored more frequently than general patients, which could provide more accurate and abundant data for the prediction model.
+%On the flip side, the study used a deprecated definition of AKI and an older MIMIC version, leading falsely labeled AKI patients and small dataset.
+Their best model achieved an AUC of 0.747, which is a promising result but still has room for improvement by using the newer MIMIC-IV database and the most recent definition of AKI to improve the model's accuracy.
+
+
+%=============================================================================%
+
+\section{Proposed Method}
+\label{sec:proposal}
+
+%\subsection{Overview}
+%\label{subsec:overview}
+
+
+
+Overall stages of the proposed pipeline PREDKIT are shown in Figure \ref{fig:overall-steps}. There are three stages: 1) Preparing data, 2) Building Models, and 3) Explaining Models.
+
+\subsection{Preparing data}
+
+For preparing data, first, DKA patients who were admitted to ICU are identified through ICD codes and ICU stay records.
+Patients with CKD are excluded since they already have severe kidney problems and predicting AKI in these patients is not meaningful.
+If a patient has multiple admissions, only the first admission is considered because of repeat sampling.
+Next, with patients' identification including subject\_id (id of patient), hadm\_id (id of hospital admission time), and icustay\_id (id of stay in ICU), other features are extracted from the MIMIC-IV database.
+Many of these features change with time, so the data is structured in a time series map where in each feature recorded time is used as key and the value is the feature value at that time.
+This data structure also supports retrieving the value of features as a flat table for compatibility with machine learning models.
+Then, the data is preprocessed and used to train predictive models of the risk of acute kidney injury in DKA patients.
+Finally, the models are evaluated to determine the best model and the best pre-processing method.
+
+
+\textit{Dataset}\label{subsec31}
+%\noindent \textbf{Original dataset.} 
+
+We will dive into the MIMIC-IV database to understand its structure and identify relevant features then establish a data structure that is more developer friendly dealing with patients' data.
+
+In order to successfully predict the risk of AKI in DKA patients, it is crucial to extract patients' health records from the MIMIC-IV database.
+Thus, the first step is to understand the structure of the MIMIC-IV database and identify the features that are relevant to the prediction of AKI in DKA patients.
+
+MIMIC-IV is a large, freely available database comprising de-identified health-related data associated with over 300.000 distinct patients who were admitted to critical care units.
+It is separated into 2 main categories: hospital data and ICU data.
+Hospital data stores information about patients' admission, basic information, results of laboratory tests, patients' diagnoses, and other general information. Otherwise, ICU data includes information about patients during their stay in the ICU, including vital signs, medications, interventions, and other information that is recorded promptly.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{figure/OverallSteps.pdf}
+    \caption{Three stages in PREDKIT: Preparing Data, Building Models, and Explaining Models}
+    \label{fig:overall-steps}
+\end{figure}
+
+
+
+
+\textit{Extracting data from MIMIC-IV dataset and Pre-processing data}
+\label{subsection:preprocessing_data}
+
+
+We will first establish a list of target patients by identifying patients with DKA and detecting them if they got admitted to ICU.
+These patients would be delivered to the next filtering step where patients with CKD stage 5 are excluded from the list because not only did the damage caused to their kidneys already severe and predicting AKI in these patients is not meaningful but also their indicators show a heavy similarity to AKI patients.
+Thus, adding these patients potentially raises the noise in the dataset and damages the model's performance.
+Then, we evaluate patient data during ICU according to \cite{kdigo-aki-guideline} to determine the AKI status of each patient.
+Finally, we extracted features from the MIMIC-IV database, these features of patients are illustrated in Table \ref{tab:features}.
+As one of the contributions in our research, we added nine features that are commonly measured in target patients leading to the exclude of 6 more patients.
+
+The pre-processing methods are separated into two main categories: tabular-based models and time series-based models.
+However, in both categories, reducing missing values is crucial and is achieved in the same way.
+First, the features which have more than 20\% missing values are removed.
+Then, patients with more than 20\% missing values are also removed.
+This process excluded nine features and three patients from the dataset proposed by T.Fan et al. \cite{xgboost-aki-dka}. Finally, there are 1213 patients in our dataset, in which there are 476 patients who are diagnosed with AKI during their ICU stay or 39.24\% of the target patients.
+
+Both datasets are evaluated in the same ways to determine if the newly added features are useful in predicting the risk of AKI in DKA patients.
+The remaining missing values are either left to be Not-a-Number (NaN), filled with zeros, or filled using KNN algorithm.
+We then evaluate which method is the most suitable option for each model.
+
+\begin{table}[h]
+\centering
+\caption{Features of patients. 
+The bolded variables are the new features that we have added to the dataset.
+Microangiopathy means patients with diabetic nephropathy, diabetic retinopathy, or diabetic peripheral neuropathy. Macroangiopathy means patients with coronary heart disease, cerebral atherosclerosis, or peripheral atherosclerosis.}
+\begin{tabular}{|l|p{0.6\textwidth}|}
+    \hline
+    \textbf{Category} & \textbf{Variable} \\ \hline
+    Demographic & Age , gender , ethnicity, height, weight \\ \hline
+    Vital signs & HR, RR, SBP, DBP \\ \hline
+    Characteristics of diabetes & DM type, microangiopathy, macroangiopathy \\ \hline    
+    Comorbidities &  history of AMI, history of ACI, CHF, liver disease, preexisting-CKD, malignant cancer, hypertension, chronic pulmonary disease \\ \hline
+    Laboratory test &  WBC, lymphocyte, Hb, PLT, PO2, PCO2, PH, AG, bicarbonate, BUN, calcium, Scr, BG, phosphate, albumin, eGFR, HbA1C, CRP, urine ketone, \textbf{hematocrit, mch, mchc,mcv, rbc, rdw} \\ \hline
+    Scoring systems &  GCS, OASIS, SOFA, SAPSII, \textbf{chloride, sodium, potassium} \\ \hline
+    Interventions &  MV, use of NaHCO3 \\  \hline
+    Prognosis &  PreIcuLos \\  \hline
+\end{tabular}
+\label{tab:features}
+\end{table}
+
+\subsection{Building models}
+We use two kinds of models: a) Tabular-based models, which only use the last information for prediction, and b) Time series-based models, which take into account the sequence of data in time order. 
+
+\textit{a. Tabular-based models}
+
+Since the amount of target patients is not large, it is more reasonable to cross-validate on the whole population.
+The dataset is split into 5 roughly equal parts of 241-242 patients.
+Then we iteratively train the model on 4 parts and evaluate on the remaining part.
+In each iteration, the four training parts are grouped, and then get the table data of the time range 24 hours from the patient's intime.
+Each strategy of aggregating multiple values in the time range is evaluated to determine the best method for predicting AKI in DKA-ICU patients.
+The values are then filtered to remove outlines using the equation \ref{eq:iqr}.
+
+\begin{equation}
+    \begin{aligned}
+        Q1 - 1.5 \times IQR &\leq x \leq Q3 + 1.5 \times IQR \\
+        where: \\
+        Q1 &= \text{first quartile} \\
+        Q3 &= \text{third quartile} \\
+        IQR &= Q3 - Q1
+    \end{aligned}
+    \label{eq:iqr}
+\end{equation}
+Here, the first quartile is the median of the lower half of the data, the third quartile is the median of the upper half of the data, and the interquartile (IQR) range is the difference between the third and first quartile.
+The values that are outside of this range are considered as outlines and are removed from the dataset.
+The categorical features are then one-hot encoded and the numerical features are standardized by Eq.\ref{eq:standardized}.
+
+\begin{equation}
+    \label{eq:standardized}
+    \begin{aligned}
+        x_{\text{standardized}} &= \frac{x - \mu}{\sigma} \\
+        where: \\
+        \mu &= \text{mean of the feature} \\
+        \sigma &= \text{standard deviation of the feature}
+    \end{aligned}
+\end{equation}
+The features are then used to train the model and evaluate the model's performance using the AUC-ROC.
+The average AUC-ROC of the 5 iterations is then calculated to determine the best preprocessing method for the tabular-based models.
+
+For each model, four instances are trained: one with missing values left as NaN or zeros, one with missing values filled by KNN; in the other two, training data is further split into training and validation set to tune the hyper-parameters of the model.
+In validating cases, the training set is split again into 5 parts and the model is trained on 4 parts and evaluated on the remaining part.
+This creates 5 models which are wrapped in a voting layer that uses the median of the predictions to make the final prediction.
+The model is then evaluated on the test set to compete with the other models.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figure/TabularSteps.pdf}
+    \caption{Prepare data steps for tabular-based predictive models, second iteration}
+    \label{fig:tabular-steps}
+\end{figure}
+
+One of the iterations of the tabular-based models is shown in Figure \ref{fig:tabular-steps} where the second part is chosen as a test set.
+The four remaining parts are grouped and the data is prepared as described above to produce a training DataFrame and a test DataFrame.
+The training DataFrame is then when through preprocessing steps as mentioned above where outlines are determined and removed, categorical features are one-hot encoded, and numerical features are standardized.
+It is worth noting that the test DataFrame is supposed to not know at the time of training so its outlines and encoders are determined by the training DataFrame instead.
+For the training process with validation, it is shown in Figure \ref{fig:tabular-steps} that the training DataFrame is split into 5 parts and is iteratively used to train five models.
+Which are stayed behind a voting layer to make the final prediction. 
+
+In this research, we will evaluate the performance of the following tabular-based models: XGBoost \cite{xgboost-source}, GRANDE \cite{GRANDE-source}, and TabPFN \cite{tabpfn}.
+XGBoost is a popular machine learning algorithm that is used for regression and classification problems, especially in the field of healthcare because it can handle missing values and is less prone to overfitting.
+The algorithm draws a series of decision trees to predict the target variable and each tree is assigned a weight based on its performance.
+It has been state-of-the-art in many medical prediction studies \cite{other-xgboost-aki}, \cite{other-xgboost-mimic} or \cite{other-xgboost-mimic-2}.
+The XGBoost algorithm is used as a baseline to verify that our target patients are aligned with the dataset proposed by T.Fan et al. \cite{xgboost-aki-dka} without a large performance gap.
+
+Designed in 2024 by S.Marton et al. \cite{GRANDE-source}, GRANDE tackled a gap in tabular-based model prediction with deep learning models.
+It is a deep learning model that excels in handling heterogeneous datasets often found in applications like medical diagnosis.
+Unlike traditional tree-based models that may struggle with the diverse challenges of tabular data, such as missing values, class imbalance, and mixed feature types, GRANDE leverages end-to-end gradient descent to optimize hard, axis-aligned decision trees within an ensemble framework.
+One interesting note about GRANDE is that it requires validated data so in this case, the two no-validate methods are not used.
+
+
+Aside from gradient-based models, TabPFN \cite{tabpfn} is a deep learning model that employs a Bayesian approach to clear the relations between features and the target variable. 
+TabPFN has been proven to have a significant improvement in performance compared to traditional gradient-boosting algorithms.
+It was built on the foundation of Prior-Data Fitted Networks so the name is TabPFN.
+PFNs approximate Posterior Predictive Distribution directly for Supervised Learning, which is a Bayesian approach to predictive modeling.
+
+\textit{b. Time series-based model}
+
+In this section, I will describe the time series-based model used to predict the risk of Acute Kidney Injury in Diabetic Ketoacidosis patients.
+The model is built using Tensorflow and Keras, it used an LSTM network to learn the temporal dependencies of time-dependent features.
+
+It starts the same with tabular-based models where the dataset is split into 5 parts and the model is trained on 4 parts and evaluated on the remaining part.
+Dynamic features' values are extracted in a time window of 1, 2, 3, 4, and 6 from the patient's intime up to 12 hours after the intime.
+Missing values are filled with previous ones and then the rest of the missing values are filled with zeros.
+The patients who are feasible to attend are the ones who have not developed AKI from the beginning of the ICU stay to the time of prediction.
+These values are then merged into a vector and fed into time-series layers. In this study, we tried 2 approaches: LSTM-based and Transformer-based methods.
+The static features are also extracted and fed into the network as a separate input or as a part of each dynamic feature vector.
+The model is then trained to predict if the patient will develop AKI in the next 7 days.
+
+For illustration, Figure \ref{fig:time-series-steps} shows the process of preparing data for the time series-based model.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figure/TimeSeriesSteps.pdf}
+    \caption{Prepare data steps for time-series-based prediction model}
+    \label{fig:time-series-steps}
+\end{figure}
+
+From each patient, their static features which do not change over the course ICU stay are extracted as a 1D array.
+The dynamic features are extracted in windows of 1, 2, 3, 4, 6 (H) hours from the patient's intime up until the time of prediction.
+This results in $12 / H$ arrays of dynamic features during each time window.
+The missing values are then filled with previous values and the rest are filled with zeros.
+Note that the values shown in Figure \ref{fig:time-series-steps} are for presentation purposes only, the actual values may or may not be the same.
+The array of dynamic features is then concatenated to form a 2D array.
+
+The static features are used to train the static part of the model and the dynamic features are used to train the dynamic part of the model.
+The result of the two parts is then concatenated and fed into a dense layer to make the final prediction.
+
+The model is then evaluated on the test set to determine the best length for the feature window and predicting window.
+The best model will then be compared to the tabular-based models to determine the best model for predicting the risk of Acute Kidney Injury in DKA-ICU patients.
+
+
+
+\subsection{Explaining models}
+
+After choosing the best model, we apply SHAP (cite) to explain the top most important features affecting the prediction. We then verify these features by comparing them with the literature. The details are in the Experimental section.
+
+%=============================================================================%
+\section{Experiments and Evaluations}
+\label{sec:evaluation}
+
+
+\subsection{Experiment settings}
+\label{experiments_settings}
+In this section, we will describe the specific steps taken to implement the simulations for the tabular-based models and the time series-based model to predict the risk of AKI in DKA patients.
+The aim is to detail the process to generate the numerical results.
+The machine used in this thesis to run the experiments on Ubuntu 22.04 with 32GB of RAM, an Intel Core i7-14700K CPU, and an NVIDIA GeForce RTX 2080Ti GPU. 
+The experiments were conducted using Python version 3.8.10 and TensorFlow version 2.7.0. 
+
+For the tabular-based models, the dataset was split into five roughly equal parts to ensure a balanced representation of patients.
+Each iteration involved training the model on four parts and evaluating on the remaining part.
+For each patient, data from 24 hours after ICU admission was aggregated.
+Outliers were removed using the interquartile range (IQR) method, and features were standardized by mean-centering and scaling by standard deviation.
+Categorical features were one-hot encoded to convert them into a numerical format suitable for the models.
+
+Handling missing values was a crucial step.
+Two different approaches were tested: leaving missing values as NaN or filling them with zeros depending on the suggestion from the model's author, and using the KNN algorithm to estimate the missing values.
+The method with the best performance for each model was selected.
+Each tabular-based model underwent cross-validation and hyperparameter tuning.
+Four versions of each model were trained: one with missing values left as NaN or zeros, one with missing values filled by KNN, and two versions involving using a validated set to help the model avoid overfitting.
+Model training with validation was performed using cross-validation on the training data, with the training set further split into five parts for validation.
+A voting layer aggregated predictions from five models trained during cross-validation, using the median prediction as the final output.
+
+For the time series-based model, the dataset was also split into five parts, similar to the tabular-based models.
+For each patient, dynamic feature values were extracted in time windows of 1, 2, 3, 4, and 6 hours up until the prediction time.
+Missing values were filled with the previous values or zeros if no previous values were available.
+A Long Short-Term Memory network was used to learn the temporal dependencies of the features.
+Static features were also extracted and used as separate inputs to the LSTM network.
+The model was trained to predict if a patient would develop AKI in the next 7 days.
+
+Two types of time windows were defined for training: the predicting window and the feature window.
+The predicting window spanned from patient admission to the prediction time, while feature windows were defined as time intervals within the predicting window.
+The number of feature windows was calculated based on the length of the predicting window and feature window.
+Data augmentation was performed by shifting the predicting windows for patients with longer ICU stays, generating more training data.
+For example, a patient developing AKI after six days would have predicted windows shifted every day to provide multiple training samples.
+
+The time series model was evaluated on the test set to determine the best lengths for features and predicting windows.
+The best-performing time series model was then compared to the tabular-based models to determine the overall best model for predicting AKI in DKA-ICU patients.
+By following these steps, the simulation method ensures a robust evaluation of different AI models for predicting AKI in DKA patients, ultimately identifying the most effective approach.
+
+\subsection{Impact of extra features}
+As mentioned in section \ref{subsection:preprocessing_data}, we expanded the dataset with extra features to see if they could help improve the models' performance. 
+One detail that was not mentioned in \cite{xgboost-aki-dka} is the exclusion of indicators that happened after the development of AKI.
+Since they only used the first value of each feature, the data leakage is not a severe problem.
+However, this study tests for the best aggregate method for each feature, so there exists data that was collected after the development of AKI.
+To avoid data leakage, we excluded all features that were collected after the development of AKI.
+
+To be inclusive, in this section, the models trained on the data without the exclusion of indicators that happened after the development of AKI is also illustrated in Table \ref{tab:extra-features} but the valid result is only the one with the "first" aggregate method.
+With models trained on the data with the exclusion of indicators that happened after the development of AKI, the best AUC-ROC of all aggregate methods is evaluated.
+
+\begin{table}[h!]
+    \centering
+    \caption{AUC-ROC of tabular-based models with and without extra features}
+    \label{tab:extra-features}
+    \begin{tabular}{|c|c|c|c|}
+        \hline
+        \textbf{Experiments} & \textbf{XGBoost} & \textbf{TabPFN} &       \textbf{GRANDE} \\ \hline
+        \multicolumn{4}{|l|}{a. Without exclusion of indicators happened after the development of AKI}  \\ \hline
+        without extra features & 0.7949 & 0.8143 & 0.7894 \\ \hline
+        with extra features & 0.7946 & 0.8160 & 0.7952 \\ \hline
+        \multicolumn{4}{|l|}{b. With exclusion of indicators happened after the development of AKI}  \\ \hline
+        Without extra features & 0.8159 & 0.8226 & 0.7981 \\ \hline
+        With extra features & 0.8283 & 0.8275 & 0.8107 \\ \hline
+    \end{tabular}
+\end{table}
+
+Overall, the extra features offer a small improvement to the models' performance of roughly 0.5\% to 1\%.
+Although the increase is small, it is consistent across all models, indicating that the extra features do provide some value in predicting AKI in DKA patients.
+Thus, it is recommended to include these extra features in the dataset to improve the predictive ability of the models.
+
+It is also visible that the exclusion of indicators happened after the development of AKI made a positive impact on the models' performance.
+The exclusion is necessary to avoid data leakage and ensure the models' predictions are based on available data at the time of prediction.
+It also reduced the noise of AKI-related intervention in the dataset helping the training process to focus on the development of AKI itself.
+Because of that, the rest of this section will only focus on the models trained on the data with the exclusion of indicators that happened after the development of AKI.
+
+\subsection{Impact of data filling with K-Nearest Neighbors}
+In this section, we compare the performance of the tabular-based models with different missing value-handling methods.
+First, let's look into the result of each model if missing values is filled with KNN or not.
+
+\begin{table}[h!]
+    \centering
+    \caption{AUC-ROC of tabular-based models without exclusion using KNN filling}
+    \label{tab:knn_filling_no_limit}
+
+    \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        \textbf{Experiments} & \textbf{XGBoost} & \textbf{TabPFN} & 
+        \textbf{GRANDE} \\ \hline
+        Without KNN filling & 0.7946 & 0.8160 & 0.7887 \\ \hline
+        With KNN filling & 0.7929 & 0.8155 & 0.7952 \\ \hline
+    \end{tabular}
+\end{table}
+
+\begin{table}[h!]
+    \centering
+    \caption{AUC-ROC of tabular-based models with and without KNN filling trained on data with exclusion}
+    \label{tab:knn_filling_with_limit}
+
+    \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        \textbf{Experiments} & \textbf{First} & \textbf{Last} & \textbf{Average} & \textbf{Median} \\  \hline        
+        \multicolumn{5}{|l|}{\textbf{XGBoost}}  \\ \hline
+        Without KNN filling & 0.8128 & 0.8284 & 0.8266 & 0.8279 \\ \hline
+        With KNN filling & 0.7958 & 0.8089 & 0.8017 & 0.8106 \\ \hline
+        \multicolumn{5}{|l|}{\textbf{TabPFN}}  \\ \hline
+        Without KNN filling & 0.8184 & 0.8275 & 0.8208 & 0.8229 \\ \hline
+        With KNN filling & 0.8271 & 0.8363 & 0.8283 & 0.8301 \\ \hline
+        \multicolumn{5}{|l|}{\textbf{GRANE}}  \\ \hline
+        Without KNN filling & 0.7968 & 0.8065 & 0.7891 & 0.8086 \\ \hline
+        With KNN filling & 0.7950 & 0.8107 & 0.7907 & 0.7966 \\ \hline
+    \end{tabular}
+\end{table}
+
+As we can see from the results in Table \ref{tab:knn_filling_no_limit} and Table \ref{tab:knn_filling_with_limit}, filling missing values with KNN does not improve the XGBoost model's performance in both cases of exclusion and non-exclusion.
+This may be the result of the nature of the XGBoost model, which is less sensitive to missing values.
+The introduction of noise from the KNN algorithm in this case caused negative effects on the model's performance.
+
+With the TabPFN model, in the case of non-exclusion, the model's performance is slightly worse with KNN filling.
+This could be due to unnecessary noise introduced by the KNN algorithm using data with noise of AKI intervention.
+However, in the case of exclusion, the model's performance consistently improved by roughly 1\% across all aggregate methods.
+As stated by N. Hollman et al. \cite{tabpfn}, TabPFN works best with non-missing data, the KNN algorithm helps fill in the missing values and improve the model's performance.
+
+The GRANDE model's performance is improved with KNN filling in the case of non-exclusion.
+On the other hand, in the case of exclusion, the model's behavior is inconsistent across different aggregate methods.
+Whether to use KNN filling with this model needs further investigation.
+
+\subsection{Comparison of aggregate methods}
+\label{sec:aggregate_methods}
+
+In this section, we compare the performance of the tabular-based models with different aggregate methods when multiple values of the same feature are available.
+The tested methods are first value, last value, average, and median.
+The result is shown in Table \ref{tab:aggregate_methods} is the best result of each model with the corresponding aggregate method.
+
+\begin{table}[h!]
+    \centering
+    \caption{AUC-ROC of tabular-based models with different aggregate methods}
+    \label{tab:aggregate_methods}
+    \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        \textbf{Aggregate Method} & \textbf{XGBoost} &       \textbf{TabPFN} & \textbf{GRANDE} \\ \hline
+        first & 0.8128 & 0.8271 & 0.7968 \\ \hline
+        last & 0.8284 & 0.8363 & 0.8107 \\ \hline
+        average & 0.8266 & 0.8283 & 0.7907 \\ \hline
+        median & 0.8279 & 0.8301 & 0.8086 \\ \hline
+    \end{tabular}
+\end{table}
+
+The results show that all tabular-based models perform best with the last value aggregate method.
+This can be attributed to the nature of the data, where the last value of a feature is much closer to the prediction time and may provide more relevant information for predicting AKI.
+However, some patients developed AKI during the first 24 hours of ICU admission rendering the usage last value less convincing.
+In the second place, the median value aggregate method is the best for them.
+This method is less sensitive to outliers and may provide a more robust representation of the data.
+In addition, at any predicting time, the median value is always available.
+
+
+\subsection{Comparison of tabular-based models}
+
+In this section, we compare the performance of the tabular-based models. 
+From Table \ref{tab:aggregate_methods}, model TabPFN always gives better results than the other models.
+
+In AUC-ROC, the value consists of 2 numbers, the first one stands for the average value of the 5 iterations and the second one stands for the standard deviation.
+As can be seen, in all cases, the deviation is very small, indicating that the models are stable and consistent across different iterations.
+The TabPFN model outperforms the other models with an AUC-ROC of 0.8363, followed by XGBoost with an AUC-ROC of 0.8284, and GRANDE with an AUC-ROC of 0.8107.
+Although having quite high AUC-ROC, the models' recall is very low 0.6562, 0.633, and 0.6414 respectively meaning it could result in missing potential AKI patients which is fatal for predictive models in medication.
+Of the three tabular-based models, TabPFN is the best choice for predicting AKI in DKA-ICU patients. 
+Thus, it is recommended to improve the models' recall to ensure that all potential AKI patients are identified.
+
+
+\subsection{Time series-based model performance}
+
+Even though the tabular-based models have shown promising results, the time series-based model may offer additional insights into the temporal changes of patients' indicators.
+
+Function similarly to the tabular-based models, the time series-based model was trained and evaluated on the dataset.
+The key difference is that the time series-based model considers the temporal changes of patients' indicators, providing a more comprehensive view of the patient's health status.
+It is achieved using 2 serrate inputs: dynamic features and static features.
+Dynamic features capture the temporal changes of patients' indicators, while static features provide additional information about the patient's demographics, comorbidities, and other static characteristics.
+
+The final result is illustrated in Table \ref{tab:summary_results}.
+This result even with the time series-based model could be attributed to the lack of data.
+In addition, the time series-based model is not sensitive enough to predict a long event of 7 days, which is 7 times longer than that provided in the dataset.
+However, its recall is the highest among all models, rendering the model's potential in this use case.
+
+
+
+\begin{table}[h!]
+    \centering
+    \caption{Summary results of different models to predict the developing acute kidney injury for DKA-ICU patients. For the Time-series based deep learning model, CF means Concatenate Features method, SF means Split Features method.}
+    \label{tab:summary_results}
+    \begin{tabular}{|c|c|c|c|c|c|}
+        \hline
+        \textbf{Methods} & \textbf{Accuracy} & \textbf{Sensitivity} & \textbf{Specificity} & \textbf{AUC-PR} & 
+        \textbf{AUC-ROC} \\ \hline
+        T.Fan \cite{xgboost-aki-dka} & 0.7490 & 0.7180 & \textbf{0.7900} & -- & 0.8000 \\ \hline
+        GRANDE & 0.7355 & 0.7320 & 0.7377 & 0.7329 & 0.8152 \\ 
+        & $\pm$ 0.0195 & $\pm$ 0.0222 & $\pm$ 0.0183 & $\pm $ 0.0451 & $\pm$ 0.0232 \\
+        \hline
+        Time series CF LSTM & 0.7509 & 0.7477 & 0.7528 & 0.7066 &  0.8149 \\ 
+        & $\pm$ 0.0319 & $\pm$ 0.0589 & $\pm$ 0.0598 & $\pm$ 0.0284 & $\pm$ 0.0144 \\ 
+        \hline
+        Time series SF LSTM & 0.7304 & 0.7091 & 0.7417 & 0.6583 & 0.7931 \\ 
+        & $\pm$ 0.0176 & $\pm$ 0.0160 & $\pm$ 0.0285 & $\pm$ 0.0216 & $\pm$ 0.0185 \\ 
+        \hline
+        Time series CF Transformer & 0.7304 & \textbf{0.7627} & 0.7129 & 0.6857 & 0.8073 \\ 
+        & $\pm$ 0.0381 & $\pm$ 0.0579 & $\pm$ 0.0742 & $\pm$ 0.0260 & $\pm$ 0.0166 \\ 
+        \hline
+        Time series SF Transformer & 0.7527 & 0.7526 & 0.7527 & 0.6988 & 0.8150 \\ 
+        & $\pm$ 0.0220 & $\pm$ 0.0215 & $\pm$ 0.0223 & $\pm$ 0.0271 & $\pm$ 0.0128 \\ 
+        \hline
+        XGBoost & 0.7504 & 0.7511 & 0.7499 & 0.7625 & 0.8284 \\ 
+        & $\pm$  0.0229 & $\pm$ 0.0215 & $\pm$ 0.0238 & $\pm$ 0.0304 & $\pm$ 0.0171 \\ 
+        \hline        
+        TabPFN & \textbf{0.7620} & 0.7574 & 0.7651 & \textbf{0.7746} & \textbf{0.8360} \\ 
+        & $\pm$ 0.0119 & $\pm$ 0.0121 & $\pm$ 0.0136 & $\pm$ 0.0309 & $\pm$ 0.0170 \\ 
+        \hline
+    \end{tabular}
+\end{table}
+
+
+
+\subsection{Explaination of models and Discussions}
+\label{sub:explanation}
+To interpret the influence of parameters on model prediction results, we use SHAP values \cite{NIPS2017_7062} evaluated on the TabPFN model. The influence of the 20 largest attributes is depicted in figure \ref{fig:shap_tabpfn_summary} and \ref{fig:shap_tabpfn_beeswarm}. The results in figure \ref{fig:shap_tabpfn_summary} show that the attributes age, OASIS \cite{johnson2013new} and weight are the attributes that have the strongest influence on the model's decision to classify DKA patients with AKI. 
+%Khi nhìn vào hình \ref{fig:shap_tabpfn_beeswarm}, chúng tôi nhận thấy các bệnh nhân DKA có các giá trị này lớn thì có khả năng cao là sẽ bị khởi phát AKI.
+When looking at the figure \ref{fig:shap_tabpfn_beeswarm}, we see that DKA patients with high values have a high chance of developing AKI.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figure/shap_tabpfn_summary_plot.pdf}
+    \caption{Summarize the effect of features of TabPFN model}
+    \label{fig:shap_tabpfn_summary}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{figure/shap_tabpfn_beeswarm.pdf}
+    \caption{Beeswarm summary plot displays the impact of top features on the output of TabPFN model}
+    \label{fig:shap_tabpfn_beeswarm}
+\end{figure}
+
+
+
+Diabetic ketoacidosis is a serious complication and a leading cause of hospitalization, morbidity, and mortality in patients with diabetes. Diabetic ketoacidosis is associated with impaired insulin production, causing hyperglycemic episodes, and is characterized by metabolic acidosis, increased ketoacid acid production, hypovolemia, and electrolyte imbalance. prize. The most common cause of AKI in DKA is renal ischemia/reperfusion injury, mainly due to dehydration due to hyperglycemia and vomiting \cite{monogram-aki-dka}. This is the most common complication in patients with diabetic ketoacidosis, occurring in approximately 35 - 77\% of patients with diabetic ketoacidosis \cite{huang2020acute} \cite{hursh2017acute}.
+
+%Ở Việt Nam, theo nghiên cứu của Vũ Chí Dũng và cộng sự năm 2021, suy thận cũng là biến chứng thường gặp nhất và có thể xảy ra ở 30% ở trẻ em và vị thành niên nhiễm toan ceton do ĐTĐ type 1 (https://tapchiyhocvietnam.vn/index.php/vmj/article/view/325/219). 
+
+%Nhiều nghiên cứu đã chỉ ra rằng, tuổi cao, hoặc thời gian mắc Đái tháo đường type I kéo dài là một trong những nguy cơ dự báo khả năng mắc biến chứng \cite{chen2020incidence}  \cite{orban2014incidence}. Điều này có thể giải thích một phần sự do sự lão hóa của thận cả về giải phẫu và sinh lý, dẫn đến chức năng thận suy giảm theo tuổi tác \cite{glassock2012implications}. Bên cạnh đó, bản thân việc mắc đái tháo đường cũng gây ra các biến chứng vi mạch, đặc biệt là tại thận hoặc võng mạc cũng khiến cho bệnh nhân lớn tuổi dễ mắc các bệnh về thận hơn. Khả năng đáp ứng với insulin ở những bệnh nhân béo phì giảm đáng kể so với những bệnh nhân có cân nặng trong mức cho phép, dẫn đến tăng nguy cơ xuất hiện nhiễm toan ceton. Nhiều nghiên cứu đã cho thấy nguy cơ mắc bệnh thận ở những người béo phì tăng lên gấp 3 lần so với những người có BMI bình thường \cite{helliwell2021body} \cite{bhagadurshah2023impact}. 
+
+Many studies have shown that advanced age, or a long duration of type I diabetes, is one of the risks that predicts the possibility of complications \cite{chen2020incidence} \cite{orban2014incidence}. 
+This may be partly explained by the aging of the kidneys both anatomically and physiologically, leading to a decline in kidney function with age \cite{glassock2012implications}. 
+In addition, having diabetes itself also causes microvascular complications, especially in the kidneys or retina, making older patients more susceptible to kidney diseases.  
+The ability to respond to insulin in obese patients is significantly reduced compared to patients with a healthy weight, leading to an increased risk of ketoacidosis. Many studies have shown that the risk of kidney disease in obese people is three times higher than in people with normal BMI \cite{helliwell2021body} \cite{bhagadurshah2023impact}.
+
+%Một số yếu tố khác cũng được gợi ý làm tăng nguy cơ mắc suy thận cấp do nhiễm toan ceton ở bệnh nhân đái tháo đường có thể kể tới như: tăng đường huyết \cite{chen2020incidence}, khoảng trống anion cao (high anion gap) \cite{yang2021acute}, nồng độ bicarbonate huyết thanh thấp, natri hiệu chỉnh thấp, lượng đường trong máu cao và urê máu cao (high blood urea nitrogen) \cite{meena2023incidence}.
+
+Some other factors have also been suggested to increase the risk of acute renal failure due to ketoacidosis in diabetic patients, including hyperglycemia \cite{chen2020incidence}, high anion gap (high anion gap). ) \cite{yang2021acute}, low serum bicarbonate, low corrected sodium, high blood sugar, and high blood urea nitrogen \cite{meena2023incidence}.
+
+
+\textbf{Oxford Acute Severity of Illness Score - OASIS} 
+%Năm 2013, Johnson, Kramer and Clifford đã sử dụng các thuật toán học máy phát triển một thang điểm xác định mức độ nghiêm trọng của bệnh, gọi là Oxford Acute Severity of Illness Score (OASIS), bao gồm 10 chỉ số bao gồm Pre-ICU LOS, age (<24), GCS, heart rate, MAP 0, Respiratory rate, Temperature, Urine Output, Ventilated and Elective Surgery \cite{johnson2013new}.
+
+In 2013, Johnson, Kramer, and Clifford used machine learning algorithms to develop a score to determine disease severity, called the Oxford Acute Severity of Illness Score (OASIS), which includes 10 indicators including Pre -ICU LOS, age (<24), GCS, heart rate, MAP 0, Respiratory rate, Temperature, Urine Output, Ventilated and Elective Surgery \cite{johnson2013new}.
+
+Oxford Acute Severity of Illness Score is a powerful tool for assessing the overall severity of illness in patients. By incorporating it as a feature in AKI risk prediction models, they are effectively leveraged in the ability to capture patients' conditions.
+
+OASIS incorporates a wide range of physiological and clinical variables, including respiratory, cardiovascular, neurological, and renal function, that collectively provide a comprehensive snapshot of a patient's overall severity of illness. 
+Since AKI often occurs in the context of severe illness, the severity of a patient’s condition as captured by OASIS is relevant. High OASIS scores may indicate patients who are at higher risk of developing complications like AKI due to their critical condition.
+
+Certain components of OASIS, such as urine output and mean arterial pressure, directly relate to kidney function and perfusion, making them particularly relevant for predicting AKI. Other components, for instance, heart rate, respiratory rate, and Glasgow Coma Scale score, may indirectly reflect factors like systemic inflammation, and hemodynamic instability that can contribute to the development of AKI. By including a wide array of variables, OASIS captures the integrated health status of a patient, which is crucial because AKI is multifactorial and often arises from a combination of underlying health issues and acute insults. When combined with other features in a predictive model, OASIS can enhance the model’s ability to identify high-risk patients by providing a synergistic effect. For instance, its integration might reveal interactions between general illness severity and specific renal risk factors.
+
+Studies \cite{shi2024clinical}\cite{hang2024blood} have demonstrated a correlation between higher OASIS scores and increased risk of AKI. In addition, all models consider OASIS to be in the top 5 of significant predictors, underscoring its importance in capturing critical aspects of patient condition that contribute to the risk of AKI
+
+OASIS can help identify patients at risk of AKI earlier by reflecting deteriorations in overall health and specific organ systems. Incorporating OASIS allows the model to account for complex interactions between different physiological systems, which are often at play in the development of AKI.
+
+The OASIS score serves as a vital feature that captures both direct and indirect indicators of a patient’s risk of developing AKI. It provides a comprehensive measure of illness severity, integrates multiple variables, and enhances the predictive capability of predictive models through its demonstrated correlation with AKI risk. By including OASIS, the models benefit from a robust, empirically validated tool that contributes significantly to identifying high-risk patients.
+
+%Thang điểm này chỉ sử dụng các chỉ số lâm sàng mà không cần sử dụng bất kỳ kết quả xét nghiệm nào nhưng có khả năng phân biệt và hiệu chuẩn tương đương với các mô hình hiện có phức tạp hơn \cite{chen2019prognosis}. Nghiên cứu của Tingting Fan và cộng sự năm 2021 đã cho thấy thang điểm  này có khác biệt giữa nhóm có và không có xuất hiện suy thận cấp do nhiễm toan ceton ở bệnh nhân đái tháo đường \cite{monogram-aki-dka}. Nghiên cứu của Na Wang và cộng sự cũng cho thấy thang điểm này cũng có giá trị phân biệt tốt nguy cơ mắc tổn thương thận cấp tính và dựu báo nguy cơ tử vong trong vòng 28 ngày của từng phân nhóm bệnh nhân AKI \cite{wang2022predictive}.
+
+This score uses only clinical indicators without any laboratory results but has discriminatory power and calibration comparable to existing more complex models \cite{chen2019prognosis}. Research by Tingting Fan and colleagues in 2021 showed that this scale differs between groups with and without acute renal failure due to ketoacidosis in diabetic patients \cite{monogram-aki-dka}. Research by Na Wang and colleagues also shows that this scale also has good value in discriminating the risk of acute kidney injury and predicting the risk of death within 28 days of each subgroup of AKI patients \cite{ wang2022predictive}.
+
+For discussion, our research explores the capability of deep learning models in predicting AKI in patients with DKA.
+DKA is a serious complication of diabetes that can lead to AKI, a sudden decline in kidney function.
+AKI, a severe complication that affects about 40\% of DKA patients, can significantly increase morbidity and mortality.
+Early detection of AKI is essential for improving patient outcomes and reducing mortality rates.
+However, current prediction models utilizing static data from the MIMIC-IV database have limitations.
+
+This research addresses these limitations by proposing a novel approach to predict AKI in DKA-ICU patients.
+The primary goal is to develop a model that leverages data from the MIMIC-IV database to achieve more accurate predictions.
+MIMIC-IV is a rich repository of de-identified health records, making it a valuable resource for studying AKI and other critical conditions.
+However, existing studies only focus on machine learning models and static data, which may not capture the dynamic nature of patient health metrics.
+Additionally, current models may include features that cause data leakage, essentially giving the model information about the outcome it's trying to predict.
+This thesis proposes removing such features to ensure the model's predictions are based solely on relevant clinical and biological data.
+
+Additionally, the thesis explores the impact of using different methods for calculating various patient indicators.
+Some indicators may have multiple measurements recorded over time.
+Analyzing how these calculations are done and their influence on the model's performance is crucial for optimizing its effectiveness.
+
+A significant contribution of this research lies in the development and evaluation of a deep-learning model that utilizes time-series data.
+Deep learning algorithms are particularly adept at identifying complex patterns in data, making them well-suited for analyzing the dynamic nature of patient health metrics.
+By incorporating time-series data and leveraging the power of deep learning, this model has the potential to outperform existing prediction models in terms of accuracy and reliability.
+
+The study focuses on developing and comparing multiple deep learning models, including tabular-based and time series-based approaches, to predict the risk of AKI within the first 7 days of ICU admission for DKA patients.
+The models were trained using various features collected 24 hours prior to ICU admission, such as demographics, vital signs, comorbidities, testing results, interventions, prognosis, and scoring systems.
+Patient data were extracted from the MIMIC-IV database, a publicly available dataset of critical care patients via SQL queries.
+They were then preprocessed and transformed into a more robust format where each patient's data was represented as an object.
+
+The Patient object contains collected features, which are either static data that do not change over the course of ICU stay or time series data stored as a map of charted time and the corresponding value.
+The object has multiple methods supporting the analysis of the patient's data, such as counting amount of existing features, and extracting features during a time window.
+This information was then used to train the deep learning models, including LSTM, TabPFN, and GRANDE.
+Finally, the models were evaluated based on their performance metrics, including accuracy, sensitivity, specificity, and AUC.
+
+%=============================================================================%
+\section{Conclusion and Discusion}
+\label{sec:conclusion}
+Predicting the risk of AKI in DKA patients is essential for early intervention and treatment, helping minimize negative effects.
+Therefore, in this paper, we propose the pipeline PREDKIT to predict the risk of AKI in DKA patients during their ICU stay.
+Multiple tabular-based deep learning models and time series-based deep learning models are implemented and compared with traditional machine learning models.
+The models are trained to predict if a DKA patient will develop AKI within the next 7 days after ICU admission.
+
+The following features are collected 24 hours prior to the admission time: demographics, vital signs, comorbidities, testing, interventions, prognosis, and scoring systems. 
+The models are evaluated based on the Area Under the Receiver Operating Characteristic Curve. 
+The final result shows that TabPFN model outperforms other models with an AUC-ROC of 0.83 while the time series-based model built on top of Long Short Term Memory is more suitable for hospital settings with a recall of 0.68.
+
+%Ngoài ra, khi phân tích các giá trị SHAP thu được từ mô hình TabPFN, chúng tôi nhận thấy các bệnh nhân DKA có các giá trị weight, OASIS and weight lớn thì có khả năng cao là sẽ bị khởi phát AKI.
+
+In addition, when analyzing SHAP values obtained from the TabPFN model, we found that DKA patients with large age (elderly), OASIS, and weight values have a high probability of developing AKI.
+
+Although having achieved promising results, this study has several limitations that could be addressed in future research.
+Firstly, the dataset used in this study was collected from a single source, which may not be representative of the general population.
+Future studies should consider using a more diverse dataset to improve the generalizability of the models.
+
+Secondly, the study focused on predicting AKI within the first 7 days of ICU admission.
+This means AKI high-risk patients who develop the condition in normal hospital wards are not considered.
+Future research could explore the prediction of AKI in a broader context, including patients outside the ICU.
+
+Lastly, the study utilized a limited set of features collected 24 hours prior to ICU admission.
+Which limits the model's ability to capture the full development of the patient's condition.
+Future research could aim to promptly predict AKI with real-time data, providing more accurate and timely predictions.
+
+%\section{Credit authorship contribution statement}
+% Quang H. Nguyen: Conceptualization, Methodology, Software, Resources, Investigation, Formal analysis, Validation, Writing – review \& editing, Supervision. Tu H. Bui: Methodology, Formal analysis, Software, Data curation, Writing – original draft, Writing - review \& editing, Visualization. Nguyen Duc Anh: Conceptualization, Methodology, Investigation, Formal analysis, Validation, Writing – review \& editing. 
+
+\section*{Declaration of competing interest}
+The authors declare that they have no known competing financial
+interests or personal relationships that could have appeared to
+influence the work reported in this paper.
+
+\section*{Code and data availability}
+The code and data used in this study are available at the Github:
+\url{https://github.com/BuiHoangTu/hust.year2023.PredictingRiskDiabeticKetoacidosis-associatedKidneyInjury}.
+%=============================================================================%
+%=============================================================================%
+
+
+%% The Appendices part is started with the command \appendix;
+%% appendix sections are then done as normal sections
+%% \appendix
+
+%% \section{}
+%% \label{}
+
+%% If you have bibdatabase file and want bibtex to generate the
+%% bibitems, please use
+%%
+%\bibliographystyle{natbib} 
+\bibliography{references}
+
+%% else use the following coding to input the bibitems directly in the
+%% TeX file.
+
+%\begin{thebibliography}{00}
+
+%% \bibitem{label}
+%% Text of bibliographic item
+
+%\bibitem{}
+
+%\end{thebibliography}
+
+%\section{Appendix}
+
+\end{document}
+\endinput
+%%
+%% End of file `elsarticle-template-num.tex'.

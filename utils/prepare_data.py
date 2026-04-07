@@ -261,8 +261,8 @@ def getTimeMonitoredPatients():
     return patients
 
 
-def trainTestPatients(patients: Patients, seed=27):
-    splitedPatients = patients.split(5, seed)
+def trainTestPatients(patients: Patients, k=5, seed=27):
+    splitedPatients = patients.split(k, seed)
 
     for i in range(splitedPatients.__len__()):
         testPatients = splitedPatients[i]
