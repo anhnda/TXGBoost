@@ -253,8 +253,8 @@ class RNNPolicyNetwork(nn.Module):
         else:
             # Sample action (with reparameterization trick)
             z = policy_dist.rsample()
-            log_prob = policy_dist.log_prob(z).sum(dim=-1)  # Sum over latent dimensions
-
+            #log_prob = policy_dist.log_prob(z).sum(dim=-1)  # Sum over latent dimensions
+            log_prob = policy_dist.log_prob(z.detach()).sum(dim=-1)
         return z, log_prob, mean
 
 # ==============================================================================
