@@ -569,82 +569,85 @@ def main():
         # ======================================================================
         # BASELINE: Standard CatBoost (Last Values + Static)
         # ======================================================================
-        print("\n  [Baseline] Training Standard CatBoost (Last + Static)...")
+    #     print("\n  [Baseline] Training Standard CatBoost (Last + Static)...")
 
-        # Extract "Last Values" using getMeasuresBetween
-        df_train_temp = train_p_obj.getMeasuresBetween(
-            pd.Timedelta(hours=-6), pd.Timedelta(hours=24), "last", getUntilAkiPositive=True
-        ).drop(columns=["subject_id", "hadm_id", "stay_id"])
-        df_test_temp = test_p.getMeasuresBetween(
-            pd.Timedelta(hours=-6), pd.Timedelta(hours=24), "last", getUntilAkiPositive=True
-        ).drop(columns=["subject_id", "hadm_id", "stay_id"])
+    #     # Extract "Last Values" using getMeasuresBetween
+    #     df_train_temp = train_p_obj.getMeasuresBetween(
+    #         pd.Timedelta(hours=-6), pd.Timedelta(hours=24), "last", getUntilAkiPositive=True
+    #     ).drop(columns=["subject_id", "hadm_id", "stay_id"])
+    #     df_test_temp = test_p.getMeasuresBetween(
+    #         pd.Timedelta(hours=-6), pd.Timedelta(hours=24), "last", getUntilAkiPositive=True
+    #     ).drop(columns=["subject_id", "hadm_id", "stay_id"])
 
-        # Encode categorical data
-        df_train_enc, df_test_enc, _ = encodeCategoricalData(df_train_temp, df_test_temp)
+    #     # Encode categorical data
+    #     df_train_enc, df_test_enc, _ = encodeCategoricalData(df_train_temp, df_test_temp)
 
-        X_tr_b = df_train_enc.drop(columns=["akd"]).fillna(0)
-        y_tr_b = df_train_enc["akd"]
-        X_te_b = df_test_enc.drop(columns=["akd"]).fillna(0)
-        y_te_b = df_test_enc["akd"]
+    #     X_tr_b = df_train_enc.drop(columns=["akd"]).fillna(0)
+    #     y_tr_b = df_train_enc["akd"]
+    #     X_te_b = df_test_enc.drop(columns=["akd"]).fillna(0)
+    #     y_te_b = df_test_enc["akd"]
 
-        # Train baseline CatBoost
-        catboost_base = CatBoostClassifier(
-            iterations=500,
-            depth=6,
-            learning_rate=0.05,
-            loss_function='Logloss',
-            eval_metric='AUC',
-            scale_pos_weight=ratio,
-            random_seed=42,
-            verbose=False,
-            allow_writing_files=False
-        )
-        catboost_base.fit(X_tr_b, y_tr_b)
+    #     # Train baseline CatBoost
+    #     catboost_base = CatBoostClassifier(
+    #         iterations=500,
+    #         depth=6,
+    #         learning_rate=0.05,
+    #         loss_function='Logloss',
+    #         eval_metric='AUC',
+    #         scale_pos_weight=ratio,
+    #         random_seed=42,
+    #         verbose=False,
+    #         allow_writing_files=False
+    #     )
+    #     catboost_base.fit(X_tr_b, y_tr_b)
 
-        # Evaluate baseline
-        y_prob_b = catboost_base.predict_proba(X_te_b)[:, 1]
-        prec_b, rec_b, _ = precision_recall_curve(y_te_b, y_prob_b)
+    #     # Evaluate baseline
+    #     y_prob_b = catboost_base.predict_proba(X_te_b)[:, 1]
+    #     prec_b, rec_b, _ = precision_recall_curve(y_te_b, y_prob_b)
 
-        baseline_auc = roc_auc_score(y_te_b, y_prob_b)
-        baseline_aupr = auc(rec_b, prec_b)
+    #     baseline_auc = roc_auc_score(y_te_b, y_prob_b)
+    #     baseline_aupr = auc(rec_b, prec_b)
 
-        metrics_baseline['auc'].append(baseline_auc)
-        metrics_baseline['auc_pr'].append(baseline_aupr)
+    #     metrics_baseline['auc'].append(baseline_auc)
+    #     metrics_baseline['auc_pr'].append(baseline_aupr)
 
-        # Plot ROC for Baseline
-        fpr_b, tpr_b, _ = roc_curve(y_te_b, y_prob_b)
-        ax2.plot(fpr_b, tpr_b, lw=2, label=f"Fold {fold} (AUC = {baseline_auc:.3f})")
+    #     # Plot ROC for Baseline
+    #     fpr_b, tpr_b, _ = roc_curve(y_te_b, y_prob_b)
+    #     ax2.plot(fpr_b, tpr_b, lw=2, label=f"Fold {fold} (AUC = {baseline_auc:.3f})")
 
-        print(f"  Baseline Test AUC: {baseline_auc:.4f} | Test AUPR: {baseline_aupr:.4f}")
-        print(f"  Fold {fold} Results -> RL: {fold_auc:.3f} vs Baseline: {baseline_auc:.3f}")
+    #     print(f"  Baseline Test AUC: {baseline_auc:.4f} | Test AUPR: {baseline_aupr:.4f}")
+    #     print(f"  Fold {fold} Results -> RL: {fold_auc:.3f} vs Baseline: {baseline_auc:.3f}")
 
-    # Final Plot Configuration
-    for ax in [ax1, ax2]:
-        ax.plot([0, 1], [0, 1], linestyle="--", color="navy", lw=2)
-        ax.set_xlim([0.0, 1.0])
-        ax.set_ylim([0.0, 1.05])
-        ax.set_xlabel("False Positive Rate")
-        ax.set_ylabel("True Positive Rate")
-        ax.legend(loc="lower right")
+    # # Final Plot Configuration
+    # for ax in [ax1, ax2]:
+    #     ax.plot([0, 1], [0, 1], linestyle="--", color="navy", lw=2)
+    #     ax.set_xlim([0.0, 1.0])
+    #     ax.set_ylim([0.0, 1.05])
+    #     ax.set_xlabel("False Positive Rate")
+    #     ax.set_ylabel("True Positive Rate")
+    #     ax.legend(loc="lower right")
 
-    ax1.set_title("RL Policy + CatBoost Judge")
-    ax2.set_title("Baseline (Last + Static)")
-    plt.tight_layout()
-    plt.savefig("result/catboost_rl_vs_baseline.png", dpi=300)
-    print("\nPlot saved to result/catboost_rl_vs_baseline.png")
+    # ax1.set_title("RL Policy + CatBoost Judge")
+    # ax2.set_title("Baseline (Last + Static)")
+    # plt.tight_layout()
+    # plt.savefig("result/catboost_rl_vs_baseline.png", dpi=300)
+    # print("\nPlot saved to result/catboost_rl_vs_baseline.png")
 
     # Summary Statistics
     print("\n" + "="*80)
     print("FINAL RESULTS SUMMARY")
     print("="*80)
 
-    def print_stat(name, rl_metrics, base_metrics):
+    def print_stat(name, rl_metrics, base_metrics=None):
         rl_mean, rl_std = np.mean(rl_metrics), np.std(rl_metrics)
-        base_mean, base_std = np.mean(base_metrics), np.std(base_metrics)
-        print(f"{name:15s} | RL: {rl_mean:.4f} ± {rl_std:.4f}  vs  Baseline: {base_mean:.4f} ± {base_std:.4f}")
+        if base_metrics is not None:
+            base_mean, base_std = np.mean(base_metrics), np.std(base_metrics)
+            print(f"{name:15s} | RL: {rl_mean:.4f} ± {rl_std:.4f}  vs  Baseline: {base_mean:.4f} ± {base_std:.4f}")
+        else:
+            print(f"{name:15s} | RL: {rl_mean:.4f} ± {rl_std:.4f}")
 
-    print_stat("AUC", metrics_rl['auc'], metrics_baseline['auc'])
-    print_stat("AUC-PR", metrics_rl['auc_pr'], metrics_baseline['auc_pr'])
+    print_stat("AUC", metrics_rl['auc'], None)
+    print_stat("AUC-PR", metrics_rl['auc_pr'],None)
 
 if __name__ == "__main__":
     main()

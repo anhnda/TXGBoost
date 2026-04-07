@@ -649,10 +649,11 @@ def main():
 
     def print_stat(name, rl_metrics, base_metrics=None):
         rl_mean, rl_std = np.mean(rl_metrics), np.std(rl_metrics)
-        base_mean, base_std = np.mean(base_metrics), np.std(base_metrics)
-        improvement = ((rl_mean - base_mean) / base_mean) * 100
-        symbol = "✓" if rl_mean > base_mean else "✗"
+
         if base_metrics is not None:
+            base_mean, base_std = np.mean(base_metrics), np.std(base_metrics)
+            improvement = ((rl_mean - base_mean) / base_mean) * 100
+            symbol = "✓" if rl_mean > base_mean else "✗"
             print(f"{name:15s} | RL: {rl_mean:.4f} ± {rl_std:.4f}  vs  Baseline: {base_mean:.4f} ± {base_std:.4f}  ({improvement:+.2f}%) {symbol}")
         else:
             print(f"{name:15s} | RL: {rl_mean:.4f} ± {rl_std:.4f}")
