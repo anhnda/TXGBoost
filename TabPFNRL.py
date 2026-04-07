@@ -248,18 +248,23 @@ class RNNPolicyNetwork(nn.Module):
             z = mean
             log_prob = None
         else:
-            # Fixed unit variance, scaled by temperature
-            std = temperature  # scalar, not learned
+            # In forward(): always sample, small fixed sigma
+            sigma = 0.05
             eps = torch.randn_like(mean)
-            z = mean + std * eps
+            z = mean + sigma * eps
+
+            # Score function: stop grad on z
+            diff = z.detach() - mean   # = -sigma * eps, but kept in graph through mean
+            log_prob = -0.5 * (diff**2).sum(dim=-1) / (sigma**2)
+
+
 
             # Log prob must depend on mean so gradients flow back to the network.
             # log p(z|mean) = -0.5 * sum((z - mean)^2 / std^2) - const
             # Since z = mean + std*eps, (z - mean) = std*eps, but we must
             # write it as (z - mean) to keep the computational graph through mean.
-            diff = z - mean  # this is std*eps but keeps grad connection to mean
-            log_prob = -0.5 * ((diff ** 2).sum(dim=-1) / (std ** 2)) - 0.5 * mean.shape[-1] * math.log(2 * math.pi * std ** 2)
-
+            diff = z.detach() - mean  # this is std*eps but keeps grad connection to mean
+            log_prob = -0.5 * (diff**2).sum(dim=-1) / (sigma**2)
         return z, log_prob, mean
 
 class SupervisedHead(nn.Module):
