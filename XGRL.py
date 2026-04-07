@@ -1,14 +1,17 @@
 """
-REINFORCEMENT LEARNING V3: RNN Policy Network → TabPFN Judge
+REINFORCEMENT LEARNING VERSION: RNN Policy Network → XGBoost Judge
 
-Goal: Beat baseline on BOTH AUC and AUPR
+Architecture:
+1. RNN processes temporal data → generates stochastic latent representation Z (policy)
+2. Concatenate [Static + Last_Values + Z] → XGBoost (reward judge)
+3. XGBoost provides reward signal (cannot backprop, so use policy gradient)
+4. Train RNN policy to maximize expected reward
 
-Key improvements over V2:
-1. Enhanced Pretraining: Better initialization with longer training
-2. AUPR-Focused Rewards: Directly optimize AUPR metric
-3. Conservative RL: Lower temperature, smaller learning rate
-4. Feature Enrichment: Add more temporal statistics beyond last value
-5. Ensemble Sampling: Multiple policy samples for robustness
+Key Features:
+- Policy Gradient (REINFORCE algorithm)
+- XGBoost as non-differentiable reward function
+- Stochastic policy with exploration
+- Validation to prevent overfitting
 """
 
 import pandas as pd
@@ -21,6 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as dist
 from torch.utils.data import Dataset, DataLoader
+from xgboost import XGBClassifier
 import random
 import os
 
@@ -36,19 +40,6 @@ from sklearn.metrics import (
     auc,
 )
 
-os.environ["SEGMENT_WRITE_KEY"] = ""
-os.environ["ANALYTICS_WRITE_KEY"] = ""
-os.environ["TABPFN_DISABLE_ANALYTICS"] = "1"
-
-try:
-    import analytics
-    analytics.write_key = None
-    analytics.disable()
-except Exception:
-    pass
-
-from tabpfn import TabPFNClassifier
-
 def seed_everything(seed=42):
     random.seed(seed)
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -58,7 +49,6 @@ def seed_everything(seed=42):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
 xseed = 42
 seed_everything(xseed)
 
@@ -87,7 +77,7 @@ FIXED_FEATURES = [
 ]
 
 # ==============================================================================
-# 1. Static Encoder
+# 1. Static Encoder (Same as before)
 # ==============================================================================
 
 class SimpleStaticEncoder:
@@ -131,7 +121,7 @@ class SimpleStaticEncoder:
         return vec
 
 # ==============================================================================
-# 2. Dataset
+# 2. Dataset (Same structure as before)
 # ==============================================================================
 
 class HybridDataset(Dataset):
@@ -215,11 +205,14 @@ def hybrid_collate_fn(batch):
     return temporal_batch, torch.tensor(label_list, dtype=torch.float32), torch.stack(static_list)
 
 # ==============================================================================
-# 3. RNN Policy Network
+# 3. RNN Policy Network (Stochastic Policy)
 # ==============================================================================
 
 class RNNPolicyNetwork(nn.Module):
-    """RNN with Gaussian policy"""
+    """
+    RNN that outputs parameters of a distribution (policy).
+    We sample Z from this distribution to enable exploration.
+    """
     def __init__(self, input_dim, hidden_dim, latent_dim, time_dim=32):
         super().__init__()
         self.rnn_cell = TimeEmbeddedRNNCell(input_dim, hidden_dim, time_dim)
@@ -229,141 +222,49 @@ class RNNPolicyNetwork(nn.Module):
         self.fc_logstd = nn.Linear(hidden_dim, latent_dim)
 
         self.latent_dim = latent_dim
-        self.hidden_dim = hidden_dim
 
-    def forward(self, batch_data, deterministic=False, temperature=1.0):
+    def forward(self, batch_data, deterministic=False):
+        """
+        Returns:
+            z: sampled latent vector (action)
+            log_prob: log probability of the action (for policy gradient)
+            mean: mean of the distribution (for evaluation)
+        """
         times = batch_data['times'].to(DEVICE)
         values = batch_data['values'].to(DEVICE)
         masks = batch_data['masks'].to(DEVICE)
         lengths = batch_data['lengths'].to(DEVICE)
 
+        # Get RNN hidden state
         h = self.rnn_cell(times, values, masks, lengths)
 
+        # Get distribution parameters
         mean = self.fc_mean(h)
         log_std = self.fc_logstd(h)
-        log_std = torch.clamp(log_std, min=-20, max=2)
-        std = torch.exp(log_std) * temperature
+        log_std = torch.clamp(log_std, min=-20, max=2)  # Stability
+        std = torch.exp(log_std)
 
+        # Create Gaussian distribution
         policy_dist = dist.Normal(mean, std)
 
         if deterministic:
             z = mean
             log_prob = None
         else:
+            # Sample action (with reparameterization trick)
             z = policy_dist.rsample()
-            log_prob = policy_dist.log_prob(z).sum(dim=-1)
+            log_prob = policy_dist.log_prob(z).sum(dim=-1)  # Sum over latent dimensions
 
         return z, log_prob, mean
 
-class SupervisedHead(nn.Module):
-    """Enhanced supervised head with residual connection"""
-    def __init__(self, input_dim, hidden_dim=128):
-        super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
-        self.bn2 = nn.BatchNorm1d(hidden_dim // 2)
-        self.fc3 = nn.Linear(hidden_dim // 2, 1)
-        self.dropout = nn.Dropout(0.3)
-
-    def forward(self, x):
-        x = F.relu(self.bn1(self.fc1(x)))
-        x = self.dropout(x)
-        x = F.relu(self.bn2(self.fc2(x)))
-        x = self.dropout(x)
-        return torch.sigmoid(self.fc3(x))
-
 # ==============================================================================
-# 4. Enhanced Pretraining
+# 4. Feature Extraction with Policy Network
 # ==============================================================================
 
-def pretrain_rnn_enhanced(policy_net, train_loader, val_loader, epochs=50):
-    """Enhanced pretraining with better architecture and longer training"""
-    print("  [Enhanced Pretraining] Longer supervised learning...")
-
-    supervised_head = SupervisedHead(
-        policy_net.latent_dim + len(FIXED_FEATURES)
-    ).to(DEVICE)
-
-    optimizer = torch.optim.Adam(
-        list(policy_net.parameters()) + list(supervised_head.parameters()),
-        lr=0.001
-    )
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=5
-    )
-    criterion = nn.BCELoss()
-
-    best_auc = 0
-    best_state = None
-    patience = 12
-    counter = 0
-
-    for epoch in range(epochs):
-        policy_net.train()
-        supervised_head.train()
-
-        for t_data, labels, s_data in train_loader:
-            labels = labels.to(DEVICE)
-            s_data = s_data.to(DEVICE)
-
-            z, _, _ = policy_net(t_data, deterministic=True)
-            combined = torch.cat([z, s_data], dim=1)
-
-            preds = supervised_head(combined).squeeze(-1)
-            loss = criterion(preds, labels)
-
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(
-                list(policy_net.parameters()) + list(supervised_head.parameters()),
-                max_norm=1.0
-            )
-            optimizer.step()
-
-        # Validation
-        if (epoch + 1) % 3 == 0:
-            policy_net.eval()
-            supervised_head.eval()
-            all_preds, all_labels = [], []
-
-            with torch.no_grad():
-                for t_data, labels, s_data in val_loader:
-                    s_data = s_data.to(DEVICE)
-                    z, _, _ = policy_net(t_data, deterministic=True)
-                    combined = torch.cat([z, s_data], dim=1)
-                    preds = supervised_head(combined).squeeze(-1)
-                    all_preds.extend(preds.cpu().numpy())
-                    all_labels.extend(labels.numpy())
-
-            val_aupr = average_precision_score(all_labels, all_preds)
-            scheduler.step(val_aupr)
-
-            print(f"    Pretrain Epoch {epoch+1} | Val AUPR: {val_aupr:.4f}")
-
-            if val_aupr > best_auc:
-                best_auc = val_aupr
-                best_state = copy.deepcopy(policy_net.state_dict())
-                counter = 0
-            else:
-                counter += 1
-                if counter >= patience:
-                    break
-
-    if best_state is not None:
-        policy_net.load_state_dict(best_state)
-
-    print(f"  [Enhanced Pretraining] Completed. Best Val AUPR: {best_auc:.4f}")
-    return policy_net
-
-# ==============================================================================
-# 5. Feature Extraction with Enriched Temporal Features
-# ==============================================================================
-
-def extract_enriched_features_and_logprobs(policy_net, loader, deterministic=False, temperature=1.0):
+def extract_features_and_logprobs(policy_net, loader, deterministic=False):
     """
-    Extract enriched features: [Static + Last + Mean + Std + Z]
-    Adds more temporal statistics
+    Extract features: [Last_Values + Static + Z]
+    Also return log_probs for policy gradient
     """
     policy_net.eval() if deterministic else policy_net.train()
 
@@ -373,53 +274,42 @@ def extract_enriched_features_and_logprobs(policy_net, loader, deterministic=Fal
 
     with torch.set_grad_enabled(not deterministic):
         for t_data, labels, s_data in loader:
-            z, log_prob, mean = policy_net(t_data, deterministic=deterministic, temperature=temperature)
+            # 1. Sample Z from policy
+            z, log_prob, mean = policy_net(t_data, deterministic=deterministic)
             z_np = (mean if deterministic else z).detach().cpu().numpy()
 
+            # 2. Extract Last Values
             vals = t_data['values'].cpu().numpy()
             masks = t_data['masks'].cpu().numpy()
 
             batch_last_vals = []
-            batch_mean_vals = []
-            batch_std_vals = []
-
             for i in range(len(vals)):
                 patient_last = []
-                patient_mean = []
-                patient_std = []
-
                 for f_idx in range(vals.shape[2]):
                     f_vals = vals[i, :, f_idx]
                     f_mask = masks[i, :, f_idx]
                     valid_idx = np.where(f_mask > 0)[0]
 
                     if len(valid_idx) > 0:
-                        valid_vals = f_vals[valid_idx]
-                        patient_last.append(valid_vals[-1])
-                        patient_mean.append(np.mean(valid_vals))
-                        patient_std.append(np.std(valid_vals) if len(valid_vals) > 1 else 0.0)
+                        last_v = f_vals[valid_idx[-1]]
                     else:
-                        patient_last.append(0.0)
-                        patient_mean.append(0.0)
-                        patient_std.append(0.0)
-
+                        last_v = 0.0
+                    patient_last.append(last_v)
                 batch_last_vals.append(patient_last)
-                batch_mean_vals.append(patient_mean)
-                batch_std_vals.append(patient_std)
 
             last_vals_arr = np.array(batch_last_vals)
-            mean_vals_arr = np.array(batch_mean_vals)
-            std_vals_arr = np.array(batch_std_vals)
+
+            # 3. Get Static Features
             s_np = s_data.numpy()
 
-            # Enriched concatenation: [Static + Last + Mean + Std + Z]
-            combined = np.hstack([s_np, last_vals_arr, mean_vals_arr, std_vals_arr, z_np])
+            # 4. Concatenate: [Static + Last_Values + Z]
+            combined = np.hstack([s_np, last_vals_arr, z_np])
 
             all_features.append(combined)
             all_labels.extend(labels.numpy())
 
             if not deterministic and log_prob is not None:
-                all_log_probs.append(log_prob)
+                all_log_probs.append(log_prob)  # Keep gradients for policy gradient!
 
     features = np.vstack(all_features)
     labels = np.array(all_labels)
@@ -428,107 +318,122 @@ def extract_enriched_features_and_logprobs(policy_net, loader, deterministic=Fal
     return features, labels, log_probs
 
 # ==============================================================================
-# 6. Conservative RL Training
+# 5. Reinforcement Learning Training Loop
 # ==============================================================================
 
-def train_policy_conservative_rl(
+def train_policy_with_xgboost_reward(
     policy_net,
     train_loader,
     val_loader,
-    tabpfn_params,
-    epochs=80,
-    update_tabpfn_every=5
+    xgb_params,
+    epochs=100,
+    update_xgb_every=5
 ):
     """
-    Conservative RL: smaller updates, lower temperature, AUPR-focused
+    Train policy network using XGBoost as reward function.
+
+    Algorithm:
+    1. Sample Z from policy network
+    2. Train XGBoost on [Static + Last + Z] → Prediction
+    3. Compute reward based on XGBoost performance
+    4. Update policy using REINFORCE (policy gradient)
     """
 
-    optimizer = torch.optim.Adam(policy_net.parameters(), lr=0.0001)  # Lower LR
+    optimizer = torch.optim.Adam(policy_net.parameters(), lr=0.0005)
 
     best_val_auc = 0
     best_state = None
-    patience = 25
+    patience = 15
     patience_counter = 0
 
-    print("  [Conservative RL] AUPR-focused training with lower exploration...")
+    print("  [RL Training] Using XGBoost as Reward Judge...")
 
-    tabpfn_model = None
+    # Initialize XGBoost
+    xgb_model = None
 
     for epoch in range(epochs):
-        # Very conservative temperature annealing
-        temperature = max(0.3, 0.8 - epoch / (epochs * 0.7))
-
         policy_net.train()
 
-        # Sample features
-        X_train, y_train, log_probs_train = extract_enriched_features_and_logprobs(
-            policy_net, train_loader, deterministic=False, temperature=temperature
+        # =====================================================================
+        # Step 1: Sample features from current policy (stochastic)
+        # =====================================================================
+        X_train, y_train, log_probs_train = extract_features_and_logprobs(
+            policy_net, train_loader, deterministic=False
         )
 
-        # Train TabPFN
-        if epoch % update_tabpfn_every == 0 or tabpfn_model is None:
-            tabpfn_model = TabPFNClassifier(**tabpfn_params)
-            tabpfn_model.fit(X_train, y_train)
+        # =====================================================================
+        # Step 2: Train/Update XGBoost periodically
+        # =====================================================================
+        if epoch % update_xgb_every == 0 or xgb_model is None:
+            xgb_model = XGBClassifier(**xgb_params)
+            xgb_model.fit(X_train, y_train, verbose=False)
 
-        # AUPR-focused rewards
-        X_val_stoch, y_val, _ = extract_enriched_features_and_logprobs(
-            policy_net, val_loader, deterministic=False, temperature=temperature
-        )
+        # =====================================================================
+        # Step 3: Compute Rewards (Per-sample)
+        # =====================================================================
+        # Reward = 1 if XGBoost predicts correctly, 0 otherwise
+        y_pred_proba = xgb_model.predict_proba(X_train)[:, 1]
+        y_pred = (y_pred_proba > 0.5).astype(int)
 
-        y_val_proba = tabpfn_model.predict_proba(X_val_stoch)[:, 1]
-        val_aupr = average_precision_score(y_val, y_val_proba)
+        # Binary reward: correct prediction = +1, wrong = 0
+        rewards = (y_pred == y_train).astype(np.float32)
 
-        # Per-sample probability quality
-        y_train_proba = tabpfn_model.predict_proba(X_train)[:, 1]
-        rewards_smooth = np.where(y_train == 1, y_train_proba, 1 - y_train_proba)
+        # Optional: Use prediction probability as reward (smoother)
+        # For positive class (y=1): reward = pred_prob
+        # For negative class (y=0): reward = 1 - pred_prob
+        rewards_smooth = np.where(y_train == 1, y_pred_proba, 1 - y_pred_proba)
 
-        # Heavily weight AUPR (this is the key!)
-        rewards_combined = rewards_smooth + 0.5 * val_aupr  # Increased from 0.3
+        # Combine binary and smooth rewards
+        rewards_combined = 0.5 * rewards + 0.5 * rewards_smooth
 
-        # Normalize
+        # Normalize rewards (baseline subtraction)
         rewards_tensor = torch.tensor(rewards_combined, dtype=torch.float32).to(DEVICE)
         rewards_tensor = (rewards_tensor - rewards_tensor.mean()) / (rewards_tensor.std() + 1e-8)
 
-        # Policy update
+        # =====================================================================
+        # Step 4: Policy Gradient Update (REINFORCE)
+        # =====================================================================
+        # Loss = -E[log π(z|s) * R(z)]
         log_probs_train = log_probs_train.to(DEVICE)
         policy_loss = -(log_probs_train * rewards_tensor).mean()
 
-        # Minimal entropy (trust the good initialization)
-        entropy_bonus = 0.001 * log_probs_train.mean()
+        # Add entropy bonus to encourage exploration
+        entropy_bonus = 0.01 * log_probs_train.mean()  # Negative entropy
 
         total_loss = policy_loss - entropy_bonus
 
         optimizer.zero_grad()
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=0.5)  # Smaller gradients
+        torch.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=1.0)
         optimizer.step()
 
-        # Validation
+        # =====================================================================
+        # Step 5: Validation (Deterministic Policy)
+        # =====================================================================
         if (epoch + 1) % 5 == 0:
             policy_net.eval()
             with torch.no_grad():
-                X_val_det, y_val_det, _ = extract_enriched_features_and_logprobs(
+                X_val, y_val, _ = extract_features_and_logprobs(
                     policy_net, val_loader, deterministic=True
                 )
 
-                X_train_det, y_train_det, _ = extract_enriched_features_and_logprobs(
-                    policy_net, train_loader, deterministic=True
-                )
+                # Retrain XGBoost on deterministic features
+                xgb_val_model = XGBClassifier(**xgb_params)
+                xgb_val_model.fit(X_train, y_train, verbose=False)
 
-                tabpfn_val_model = TabPFNClassifier(**tabpfn_params)
-                tabpfn_val_model.fit(X_train_det, y_train_det)
+                y_val_proba = xgb_val_model.predict_proba(X_val)[:, 1]
 
-                y_val_proba_det = tabpfn_val_model.predict_proba(X_val_det)[:, 1]
+                val_auc = roc_auc_score(y_val, y_val_proba)
+                val_aupr = average_precision_score(y_val, y_val_proba)
 
-                val_auc = roc_auc_score(y_val_det, y_val_proba_det)
-                val_aupr_det = average_precision_score(y_val_det, y_val_proba_det)
+                mean_reward = rewards_combined.mean()
 
-                print(f"    Epoch {epoch+1:3d} | Temp: {temperature:.3f} | "
-                      f"Val AUC: {val_auc:.4f} | Val AUPR: {val_aupr_det:.4f}")
+                print(f"    Epoch {epoch+1:3d} | Reward: {mean_reward:.4f} | "
+                      f"Val AUC: {val_auc:.4f} | Val AUPR: {val_aupr:.4f}")
 
-                # Early stopping on AUPR
-                if val_aupr_det > best_val_auc:
-                    best_val_auc = val_aupr_det
+                # Early stopping based on validation AUPR
+                if val_aupr > best_val_auc:
+                    best_val_auc = val_aupr
                     best_state = copy.deepcopy(policy_net.state_dict())
                     patience_counter = 0
                 else:
@@ -537,18 +442,19 @@ def train_policy_conservative_rl(
                         print(f"    Early stopping at epoch {epoch+1}")
                         break
 
+    # Load best model
     if best_state is not None:
         policy_net.load_state_dict(best_state)
 
     return policy_net
 
 # ==============================================================================
-# 7. Main Execution
+# 6. Main Execution
 # ==============================================================================
 
 def main():
     print("="*80)
-    print("RL POLICY V3 (Enhanced) TabPFN")
+    print("RL POLICY (RNN + XGBoost) vs BASELINE (Last + Static)")
     print("="*80)
 
     patients = load_and_prepare_patients()
@@ -560,12 +466,13 @@ def main():
 
     print(f"Input: {len(temporal_feats)} Temporal + {len(FIXED_FEATURES)} Static Features")
 
+    # Store metrics for RL and Baseline
     metrics_rl = {k: [] for k in ['auc', 'auc_pr']}
     metrics_baseline = {k: [] for k in ['auc', 'auc_pr']}
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
-    for fold, (train_full, test_p) in enumerate(trainTestPatients(patients, seed=xseed)):
+    for fold, (train_full, test_p) in enumerate(trainTestPatients(patients,seed=xseed)):
         print(f"\n{'='*80}")
         print(f"Fold {fold}")
         print('='*80)
@@ -575,6 +482,7 @@ def main():
         val_p = val_p_obj.patientList
         test_p_list = test_p.patientList
 
+        # 1. Create Datasets
         train_ds = HybridDataset(train_p, temporal_feats, encoder)
         stats = train_ds.get_normalization_stats()
         val_ds = HybridDataset(val_p, temporal_feats, encoder, stats)
@@ -584,50 +492,59 @@ def main():
         val_loader = DataLoader(val_ds, batch_size=32, shuffle=False, collate_fn=hybrid_collate_fn)
         test_loader = DataLoader(test_ds, batch_size=32, shuffle=False, collate_fn=hybrid_collate_fn)
 
-        # Larger capacity
-        latent_dim = 28
+        # 2. Initialize Policy Network
+        latent_dim = 16  # Dimension of learned representation Z
         policy_net = RNNPolicyNetwork(
             input_dim=len(temporal_feats),
-            hidden_dim=20,
+            hidden_dim=12,
             latent_dim=latent_dim,
             time_dim=32
         ).to(DEVICE)
 
-        tabpfn_params = {
-            'device': 'cuda' if torch.cuda.is_available() else 'cpu'
+        # 3. XGBoost Parameters
+        ratio = np.sum([1 for _, l, _ in train_ds if l == 0]) / max(1, np.sum([1 for _, l, _ in train_ds if l == 1]))
+
+        xgb_params = {
+            'n_estimators': 200,
+            'max_depth': 4,
+            'learning_rate': 0.05,
+            'subsample': 0.8,
+            'colsample_bytree': 0.8,
+            'scale_pos_weight': ratio,
+            'random_state': 42,
+            'eval_metric': 'auc'
         }
 
-        # STEP 1: Enhanced Pretraining (longer)
-        policy_net = pretrain_rnn_enhanced(policy_net, train_loader, val_loader, epochs=50)
-
-        # STEP 2: Conservative RL Fine-tuning
-        policy_net = train_policy_conservative_rl(
+        # 4. Train Policy with RL
+        policy_net = train_policy_with_xgboost_reward(
             policy_net,
             train_loader,
             val_loader,
-            tabpfn_params,
-            epochs=80,
-            update_tabpfn_every=5
+            xgb_params,
+            epochs=100,
+            update_xgb_every=5
         )
 
-        # Final Evaluation
+        # 5. Final Evaluation on Test Set
         print("\n  [Final Test Evaluation]")
         policy_net.eval()
 
         with torch.no_grad():
-            X_train_final, y_train_final, _ = extract_enriched_features_and_logprobs(
+            X_train_final, y_train_final, _ = extract_features_and_logprobs(
                 policy_net, train_loader, deterministic=True
             )
-            X_test_final, y_test_final, _ = extract_enriched_features_and_logprobs(
+            X_test_final, y_test_final, _ = extract_features_and_logprobs(
                 policy_net, test_loader, deterministic=True
             )
 
-        final_tabpfn = TabPFNClassifier(**tabpfn_params)
-        final_tabpfn.fit(X_train_final, y_train_final)
+        # Train final XGBoost on deterministic features
+        final_xgb = XGBClassifier(**xgb_params)
+        final_xgb.fit(X_train_final, y_train_final, verbose=False)
 
-        y_test_proba = final_tabpfn.predict_proba(X_test_final)[:, 1]
+        y_test_proba = final_xgb.predict_proba(X_test_final)[:, 1]
         y_test_pred = (y_test_proba > 0.5).astype(int)
 
+        # Compute Metrics
         tn, fp, fn, tp = confusion_matrix(y_test_final, y_test_pred).ravel()
         prec, rec, _ = precision_recall_curve(y_test_final, y_test_proba)
 
@@ -637,27 +554,88 @@ def main():
         metrics_rl['auc'].append(fold_auc)
         metrics_rl['auc_pr'].append(fold_aupr)
 
+        # Plot ROC for RL
         fpr, tpr, _ = roc_curve(y_test_final, y_test_proba)
         ax1.plot(fpr, tpr, lw=2, label=f"Fold {fold} (AUC = {fold_auc:.3f})")
 
         print(f"  RL Test AUC: {fold_auc:.4f} | Test AUPR: {fold_aupr:.4f}")
 
+        # ======================================================================
+        # BASELINE: Standard XGBoost (Last Values + Static)
+        # ======================================================================
+        print("\n  [Baseline] Training Standard XGBoost (Last + Static)...")
 
+        # Extract "Last Values" using getMeasuresBetween
+        df_train_temp = train_p_obj.getMeasuresBetween(
+            pd.Timedelta(hours=-6), pd.Timedelta(hours=24), "last", getUntilAkiPositive=True
+        ).drop(columns=["subject_id", "hadm_id", "stay_id"])
+        df_test_temp = test_p.getMeasuresBetween(
+            pd.Timedelta(hours=-6), pd.Timedelta(hours=24), "last", getUntilAkiPositive=True
+        ).drop(columns=["subject_id", "hadm_id", "stay_id"])
+
+        # Encode categorical data
+        df_train_enc, df_test_enc, _ = encodeCategoricalData(df_train_temp, df_test_temp)
+
+        X_tr_b = df_train_enc.drop(columns=["akd"]).fillna(0)
+        y_tr_b = df_train_enc["akd"]
+        X_te_b = df_test_enc.drop(columns=["akd"]).fillna(0)
+        y_te_b = df_test_enc["akd"]
+
+        # Train baseline XGBoost
+        xgb_base = XGBClassifier(
+            n_estimators=500,
+            max_depth=6,
+            learning_rate=0.05,
+            scale_pos_weight=ratio,
+            eval_metric='auc',
+            random_state=42
+        )
+        xgb_base.fit(X_tr_b, y_tr_b)
+
+        # Evaluate baseline
+        y_prob_b = xgb_base.predict_proba(X_te_b)[:, 1]
+        prec_b, rec_b, _ = precision_recall_curve(y_te_b, y_prob_b)
+
+        baseline_auc = roc_auc_score(y_te_b, y_prob_b)
+        baseline_aupr = auc(rec_b, prec_b)
+
+        metrics_baseline['auc'].append(baseline_auc)
+        metrics_baseline['auc_pr'].append(baseline_aupr)
+
+        # Plot ROC for Baseline
+        fpr_b, tpr_b, _ = roc_curve(y_te_b, y_prob_b)
+        ax2.plot(fpr_b, tpr_b, lw=2, label=f"Fold {fold} (AUC = {baseline_auc:.3f})")
+
+        print(f"  Baseline Test AUC: {baseline_auc:.4f} | Test AUPR: {baseline_aupr:.4f}")
+        print(f"  Fold {fold} Results -> RL: {fold_auc:.3f} vs Baseline: {baseline_auc:.3f}")
+
+    # Final Plot Configuration
+    for ax in [ax1, ax2]:
+        ax.plot([0, 1], [0, 1], linestyle="--", color="navy", lw=2)
+        ax.set_xlim([0.0, 1.0])
+        ax.set_ylim([0.0, 1.05])
+        ax.set_xlabel("False Positive Rate")
+        ax.set_ylabel("True Positive Rate")
+        ax.legend(loc="lower right")
+
+    ax1.set_title("RL Policy + XGBoost Judge")
+    ax2.set_title("Baseline (Last + Static)")
+    plt.tight_layout()
+    plt.savefig("result/xg_rl_vs_baseline.png", dpi=300)
+    print("\nPlot saved to result/xg_rl_vs_baseline.png")
+
+    # Summary Statistics
     print("\n" + "="*80)
     print("FINAL RESULTS SUMMARY")
     print("="*80)
 
-    def print_stat(name, rl_metrics, base_metrics=None):
+    def print_stat(name, rl_metrics, base_metrics):
         rl_mean, rl_std = np.mean(rl_metrics), np.std(rl_metrics)
         base_mean, base_std = np.mean(base_metrics), np.std(base_metrics)
-        improvement = ((rl_mean - base_mean) / base_mean) * 100
-        symbol = "✓" if rl_mean > base_mean else "✗"
-        if base_metrics is not None:
-            print(f"{name:15s} | RL: {rl_mean:.4f} ± {rl_std:.4f}  vs  Baseline: {base_mean:.4f} ± {base_std:.4f}  ({improvement:+.2f}%) {symbol}")
-        else:
-            print(f"{name:15s} | RL: {rl_mean:.4f} ± {rl_std:.4f}")
-    print_stat("AUC", metrics_rl['auc'], None)
-    print_stat("AUC-PR", metrics_rl['auc_pr'], None)
+        print(f"{name:15s} | RL: {rl_mean:.4f} ± {rl_std:.4f}  vs  Baseline: {base_mean:.4f} ± {base_std:.4f}")
+
+    print_stat("AUC", metrics_rl['auc'], metrics_baseline['auc'])
+    print_stat("AUC-PR", metrics_rl['auc_pr'], metrics_baseline['auc_pr'])
 
 if __name__ == "__main__":
     main()
