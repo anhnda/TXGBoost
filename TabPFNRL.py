@@ -235,7 +235,7 @@ class RNNPolicyNetwork(nn.Module):
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
 
-    def forward(self, batch_data, deterministic=False, temperature=1.0):
+    def forward(self, batch_data, deterministic=False, temperature=0.05):
         times = batch_data['times'].to(DEVICE)
         values = batch_data['values'].to(DEVICE)
         masks = batch_data['masks'].to(DEVICE)
@@ -248,23 +248,11 @@ class RNNPolicyNetwork(nn.Module):
             z = mean
             log_prob = None
         else:
-            # In forward(): always sample, small fixed sigma
-            sigma = 0.05
             eps = torch.randn_like(mean)
-            z = mean + sigma * eps
+            z = mean + temperature * eps
+            diff = z.detach() - mean  # numerically = temperature*eps - 0, grad = -1 w.r.t mean
+            log_prob = -0.5 * (diff**2).sum(dim=-1) / (temperature**2)
 
-            # Score function: stop grad on z
-            diff = z.detach() - mean   # = -sigma * eps, but kept in graph through mean
-            log_prob = -0.5 * (diff**2).sum(dim=-1) / (sigma**2)
-
-
-
-            # Log prob must depend on mean so gradients flow back to the network.
-            # log p(z|mean) = -0.5 * sum((z - mean)^2 / std^2) - const
-            # Since z = mean + std*eps, (z - mean) = std*eps, but we must
-            # write it as (z - mean) to keep the computational graph through mean.
-            diff = z.detach() - mean  # this is std*eps but keeps grad connection to mean
-            log_prob = -0.5 * (diff**2).sum(dim=-1) / (sigma**2)
         return z, log_prob, mean
 
 class SupervisedHead(nn.Module):
