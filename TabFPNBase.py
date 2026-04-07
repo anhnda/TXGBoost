@@ -134,8 +134,7 @@ def main():
 
         try:
             tabpfn = TabPFNClassifier(
-                device='cpu',  # Use 'cuda' if GPU is available
-                N_ensemble_configurations=32,
+                device='cuda',  # Use 'cuda' if GPU is available
                 no_preprocess_mode=False  # Let TabPFN handle preprocessing
             )
 
