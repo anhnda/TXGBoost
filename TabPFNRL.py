@@ -253,9 +253,12 @@ class RNNPolicyNetwork(nn.Module):
             eps = torch.randn_like(mean)
             z = mean + std * eps
 
-            # Log prob under N(mean, std^2 * I)
-            # log p(z|mean) = -0.5 * sum((z - mean)^2 / std^2) - 0.5*d*log(2*pi*std^2)
-            log_prob = -0.5 * ((eps ** 2).sum(dim=-1) + mean.shape[-1] * math.log(2 * math.pi * std ** 2))
+            # Log prob must depend on mean so gradients flow back to the network.
+            # log p(z|mean) = -0.5 * sum((z - mean)^2 / std^2) - const
+            # Since z = mean + std*eps, (z - mean) = std*eps, but we must
+            # write it as (z - mean) to keep the computational graph through mean.
+            diff = z - mean  # this is std*eps but keeps grad connection to mean
+            log_prob = -0.5 * ((diff ** 2).sum(dim=-1) / (std ** 2)) - 0.5 * mean.shape[-1] * math.log(2 * math.pi * std ** 2)
 
         return z, log_prob, mean
 
