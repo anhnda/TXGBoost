@@ -65,7 +65,7 @@ def main():
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
-    for fold, (train_full, test_p) in enumerate(trainTestPatients(patients, k=10,seed=xseed)):
+    for fold, (train_full, test_p) in enumerate(trainTestPatients(patients,seed=xseed)):
         print(f"\n{'='*80}")
         print(f"Fold {fold}")
         print('='*80)
