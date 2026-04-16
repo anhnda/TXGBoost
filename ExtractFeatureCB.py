@@ -8,18 +8,17 @@ Two modes:
    - Temporal features (learned Z representation)
 """
 
-import pandas as pd
 import numpy as np
 import sys
 import copy
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 from catboost import CatBoostClassifier
 import pickle
 import os
 import argparse
-from sklearn.metrics import roc_auc_score, average_precision_score, auc, precision_recall_curve
+from sklearn.metrics import roc_auc_score, auc, precision_recall_curve
+from scipy.stats import pearsonr
 
 # SHAP library
 import shap
@@ -432,14 +431,307 @@ def extract_features_with_shap(model_dir="models/catboostrl", top_k=20):
     return shap_values, feature_names
 
 # ==============================================================================
+# MODE 3: INTERPRET LATENT FACTORS (Trace back to RNN inputs)
+# ==============================================================================
+
+def interpret_latent_factors(model_dir="models/catboostrl", top_k=10):
+    """
+    Trace latent factors back to RNN input level.
+
+    For each latent dimension, identify which temporal input features
+    contribute most to its activation.
+
+    Methods:
+    1. Correlation analysis: Correlate temporal inputs with latent outputs
+    2. Gradient-based attribution: Use gradients to see feature importance
+    3. Temporal pattern analysis: Analyze which time points matter most
+    """
+    print("="*80)
+    print("MODE 3: INTERPRETING LATENT FACTORS")
+    print("="*80)
+
+    # Load saved data
+    print(f"\nLoading model and data from {model_dir}/")
+
+    with open(os.path.join(model_dir, 'fold_data.pkl'), 'rb') as f:
+        data = pickle.load(f)
+
+    temporal_feats = data['temporal_feats']
+    latent_dim = data['latent_dim']
+
+    # Load policy network
+    policy_net = RNNPolicyNetwork(
+        input_dim=len(temporal_feats),
+        hidden_dim=12,
+        latent_dim=latent_dim,
+        time_dim=32
+    ).to(DEVICE)
+
+    policy_net.load_state_dict(
+        torch.load(os.path.join(model_dir, 'policy_net.pth'),
+                   map_location=DEVICE)
+    )
+    policy_net.eval()
+
+    print(f"Loaded policy network with {latent_dim} latent dimensions")
+    print(f"Temporal features: {len(temporal_feats)}")
+
+    # Load test data to reconstruct temporal inputs
+    patients = load_and_prepare_patients()
+
+    # Need to reconstruct the test set from the same fold
+    fold_idx = data['fold_idx']
+    encoder = data['encoder']
+    stats = data['stats']
+
+    # Iterate to the correct fold
+    for fold, (train_full, test_p) in enumerate(trainTestPatients(patients, seed=xseed)):
+        if fold == fold_idx:
+            test_p_list = test_p.patientList
+            break
+
+    # Create test dataset
+    test_ds = HybridDataset(test_p_list, temporal_feats, encoder, stats)
+    test_loader = DataLoader(test_ds, batch_size=32, shuffle=False, collate_fn=hybrid_collate_fn)
+
+    print(f"\nReconstructed test set with {len(test_ds)} samples")
+
+    # ==============================================================================
+    # Extract temporal inputs and latent outputs
+    # ==============================================================================
+    print("\n" + "="*80)
+    print("EXTRACTING TEMPORAL INPUTS AND LATENT OUTPUTS")
+    print("="*80)
+
+    all_temporal_inputs = []  # Raw temporal sequences
+    all_temporal_masks = []   # Masks for valid values
+    all_latent_outputs = []   # Latent Z vectors
+    all_labels = []
+
+    with torch.no_grad():
+        for t_data, labels, s_data in test_loader:
+            # Get latent outputs (deterministic)
+            z, _, mean = policy_net(t_data, deterministic=True)
+
+            # Store latent outputs
+            all_latent_outputs.append(mean.cpu().numpy())
+            all_labels.extend(labels.numpy())
+
+            # Store temporal inputs
+            vals = t_data['values'].cpu().numpy()
+            masks = t_data['masks'].cpu().numpy()
+
+            all_temporal_inputs.append(vals)
+            all_temporal_masks.append(masks)
+
+    # Concatenate all batches
+    temporal_inputs = np.vstack([batch.reshape(batch.shape[0], -1)
+                                  for batch in all_temporal_inputs])
+    temporal_masks = np.vstack([batch.reshape(batch.shape[0], -1)
+                                for batch in all_temporal_masks])
+    latent_outputs = np.vstack(all_latent_outputs)
+    labels = np.array(all_labels)
+
+    print(f"Temporal inputs shape: {temporal_inputs.shape}")
+    print(f"Latent outputs shape: {latent_outputs.shape}")
+
+    # ==============================================================================
+    # ANALYSIS 1: Correlation between temporal features and latent dimensions
+    # ==============================================================================
+    print("\n" + "="*80)
+    print("CORRELATION ANALYSIS: Temporal Features → Latent Dimensions")
+    print("="*80)
+
+    # For each temporal feature, compute statistics across time
+    # (mean, std, min, max, last, count of valid measurements)
+
+    n_samples = len(test_ds)
+    max_len = all_temporal_inputs[0].shape[1]  # Max sequence length
+    n_temporal_feats = len(temporal_feats)
+
+    # Aggregate temporal features per sample
+    temporal_aggregates = np.zeros((n_samples, n_temporal_feats * 4))  # mean, std, min, max
+
+    sample_idx = 0
+    for batch_vals, batch_masks in zip(all_temporal_inputs, all_temporal_masks):
+        for i in range(len(batch_vals)):
+            vals = batch_vals[i]  # shape: (seq_len, n_feats)
+            masks = batch_masks[i]
+
+            for f_idx in range(n_temporal_feats):
+                f_vals = vals[:, f_idx]
+                f_mask = masks[:, f_idx]
+                valid_vals = f_vals[f_mask > 0]
+
+                if len(valid_vals) > 0:
+                    temporal_aggregates[sample_idx, f_idx * 4 + 0] = np.mean(valid_vals)
+                    temporal_aggregates[sample_idx, f_idx * 4 + 1] = np.std(valid_vals)
+                    temporal_aggregates[sample_idx, f_idx * 4 + 2] = np.min(valid_vals)
+                    temporal_aggregates[sample_idx, f_idx * 4 + 3] = np.max(valid_vals)
+
+            sample_idx += 1
+
+    # Compute correlation between temporal aggregates and latent dimensions
+    from scipy.stats import pearsonr
+
+    # For each latent dimension, find most correlated temporal features
+    latent_to_temporal = {}
+
+    for z_idx in range(latent_dim):
+        z_values = latent_outputs[:, z_idx]
+        correlations = []
+
+        for f_idx in range(n_temporal_feats):
+            # Check correlation with different aggregates
+            corr_mean = abs(pearsonr(temporal_aggregates[:, f_idx * 4 + 0], z_values)[0])
+            corr_std = abs(pearsonr(temporal_aggregates[:, f_idx * 4 + 1], z_values)[0])
+            corr_min = abs(pearsonr(temporal_aggregates[:, f_idx * 4 + 2], z_values)[0])
+            corr_max = abs(pearsonr(temporal_aggregates[:, f_idx * 4 + 3], z_values)[0])
+
+            max_corr = max(corr_mean, corr_std, corr_min, corr_max)
+            agg_type = ['mean', 'std', 'min', 'max'][np.argmax([corr_mean, corr_std, corr_min, corr_max])]
+
+            correlations.append((temporal_feats[f_idx], max_corr, agg_type))
+
+        # Sort by correlation
+        correlations.sort(key=lambda x: x[1], reverse=True)
+        latent_to_temporal[z_idx] = correlations
+
+    # Display results for important latent dimensions
+    # Load SHAP results to identify important latents
+    shap_file = os.path.join(model_dir, 'shap_results.pkl')
+    if os.path.exists(shap_file):
+        with open(shap_file, 'rb') as f:
+            shap_data = pickle.load(f)
+
+        mean_abs_shap_latent = shap_data['mean_abs_shap_latent']
+        sorted_latent_idx = np.argsort(mean_abs_shap_latent)[::-1]
+
+        print("\nTop latent dimensions by SHAP importance and their temporal feature correlations:")
+        print("="*80)
+
+        for rank, z_idx in enumerate(sorted_latent_idx[:min(10, latent_dim)]):
+            shap_importance = mean_abs_shap_latent[z_idx]
+            print(f"\nLatent Z{z_idx} (SHAP importance: {shap_importance:.6f})")
+            print("-" * 80)
+            print(f"{'Rank':<6} {'Temporal Feature':<30} {'Correlation':<15} {'Aggregate':<10}")
+            print("-" * 80)
+
+            for i, (feat_name, corr, agg_type) in enumerate(latent_to_temporal[z_idx][:top_k]):
+                print(f"{i+1:<6} {feat_name:<30} {corr:<15.6f} {agg_type:<10}")
+    else:
+        print("\nNo SHAP results found. Showing all latent dimensions:")
+        for z_idx in range(min(5, latent_dim)):
+            print(f"\nLatent Z{z_idx}")
+            print("-" * 80)
+            print(f"{'Rank':<6} {'Temporal Feature':<30} {'Correlation':<15} {'Aggregate':<10}")
+            print("-" * 80)
+
+            for i, (feat_name, corr, agg_type) in enumerate(latent_to_temporal[z_idx][:top_k]):
+                print(f"{i+1:<6} {feat_name:<30} {corr:<15.6f} {agg_type:<10}")
+
+    # ==============================================================================
+    # ANALYSIS 2: Gradient-based attribution
+    # ==============================================================================
+    print("\n" + "="*80)
+    print("GRADIENT-BASED ATTRIBUTION: Which temporal features influence each latent?")
+    print("="*80)
+
+    # Enable gradients
+    policy_net.train()
+
+    gradient_attributions = {z_idx: np.zeros(n_temporal_feats) for z_idx in range(latent_dim)}
+
+    print("\nComputing gradients...")
+    for t_data, labels, s_data in test_loader:
+        t_data_grad = {
+            'times': t_data['times'].to(DEVICE),
+            'values': t_data['values'].to(DEVICE).requires_grad_(True),
+            'masks': t_data['masks'].to(DEVICE),
+            'lengths': t_data['lengths'].to(DEVICE)
+        }
+
+        # Forward pass
+        z, _, mean = policy_net(t_data_grad, deterministic=True)
+
+        # For each latent dimension, compute gradient
+        for z_idx in range(latent_dim):
+            if z_idx < mean.shape[1]:
+                # Compute gradient of z_idx w.r.t. input values
+                mean[:, z_idx].sum().backward(retain_graph=True)
+
+                # Get gradients
+                grads = t_data_grad['values'].grad
+                masks = t_data_grad['masks']
+
+                # Compute attribution per feature (averaged over time and samples)
+                for f_idx in range(n_temporal_feats):
+                    feat_grads = grads[:, :, f_idx]
+                    feat_masks = masks[:, :, f_idx]
+
+                    # Average absolute gradient for valid positions
+                    valid_grads = torch.abs(feat_grads * feat_masks).sum().item()
+                    valid_count = feat_masks.sum().item()
+
+                    if valid_count > 0:
+                        gradient_attributions[z_idx][f_idx] += valid_grads / valid_count
+
+                # Zero gradients for next iteration
+                t_data_grad['values'].grad.zero_()
+
+    # Normalize attributions
+    for z_idx in range(latent_dim):
+        gradient_attributions[z_idx] /= len(test_loader)
+
+    # Display gradient attributions for important latents
+    if os.path.exists(shap_file):
+        print("\nTop latent dimensions and their gradient-based temporal feature attributions:")
+        print("="*80)
+
+        for rank, z_idx in enumerate(sorted_latent_idx[:min(10, latent_dim)]):
+            shap_importance = mean_abs_shap_latent[z_idx]
+            print(f"\nLatent Z{z_idx} (SHAP importance: {shap_importance:.6f})")
+            print("-" * 80)
+            print(f"{'Rank':<6} {'Temporal Feature':<30} {'Gradient Attribution':<20}")
+            print("-" * 80)
+
+            # Sort features by gradient attribution
+            feat_grad_pairs = [(temporal_feats[i], gradient_attributions[z_idx][i])
+                               for i in range(n_temporal_feats)]
+            feat_grad_pairs.sort(key=lambda x: x[1], reverse=True)
+
+            for i, (feat_name, grad_attr) in enumerate(feat_grad_pairs[:top_k]):
+                print(f"{i+1:<6} {feat_name:<30} {grad_attr:<20.6f}")
+
+    # ==============================================================================
+    # Save interpretation results
+    # ==============================================================================
+    output_file = os.path.join(model_dir, 'latent_interpretation.pkl')
+    print(f"\n{'='*80}")
+    print(f"Saving latent interpretation to {output_file}")
+    print('='*80)
+
+    with open(output_file, 'wb') as f:
+        pickle.dump({
+            'latent_to_temporal_corr': latent_to_temporal,
+            'gradient_attributions': gradient_attributions,
+            'temporal_features': temporal_feats,
+            'latent_dim': latent_dim
+        }, f)
+
+    print("Latent interpretation saved successfully!")
+
+    policy_net.eval()
+
+# ==============================================================================
 # MAIN
 # ==============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description='Feature Extraction for CatBoostRL')
     parser.add_argument('--mode', type=str, required=True,
-                        choices=['train_model', 'extract'],
-                        help='Mode: train_model or extract')
+                        choices=['train_model', 'extract', 'interpret'],
+                        help='Mode: train_model, extract, or interpret')
     parser.add_argument('--output_dir', type=str, default='models/catboostrl',
                         help='Directory to save/load models')
     parser.add_argument('--top_k', type=int, default=20,
@@ -451,6 +743,8 @@ def main():
         train_and_save_best_fold(output_dir=args.output_dir)
     elif args.mode == 'extract':
         extract_features_with_shap(model_dir=args.output_dir, top_k=args.top_k)
+    elif args.mode == 'interpret':
+        interpret_latent_factors(model_dir=args.output_dir, top_k=args.top_k)
 
 if __name__ == "__main__":
     main()
