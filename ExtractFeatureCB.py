@@ -503,7 +503,7 @@ def interpret_latent_factors(model_dir="models/catboostrl", top_k=10):
     print("EXTRACTING TEMPORAL INPUTS AND LATENT OUTPUTS")
     print("="*80)
 
-    all_temporal_inputs = []  # Raw temporal sequences
+    all_temporal_inputs = []  # Raw temporal sequences (keep as list due to variable lengths)
     all_temporal_masks = []   # Masks for valid values
     all_latent_outputs = []   # Latent Z vectors
     all_labels = []
@@ -517,23 +517,20 @@ def interpret_latent_factors(model_dir="models/catboostrl", top_k=10):
             all_latent_outputs.append(mean.cpu().numpy())
             all_labels.extend(labels.numpy())
 
-            # Store temporal inputs
+            # Store temporal inputs (keep in 3D format)
             vals = t_data['values'].cpu().numpy()
             masks = t_data['masks'].cpu().numpy()
 
             all_temporal_inputs.append(vals)
             all_temporal_masks.append(masks)
 
-    # Concatenate all batches
-    temporal_inputs = np.vstack([batch.reshape(batch.shape[0], -1)
-                                  for batch in all_temporal_inputs])
-    temporal_masks = np.vstack([batch.reshape(batch.shape[0], -1)
-                                for batch in all_temporal_masks])
+    # Concatenate latent outputs
     latent_outputs = np.vstack(all_latent_outputs)
     labels = np.array(all_labels)
 
-    print(f"Temporal inputs shape: {temporal_inputs.shape}")
+    print(f"Number of samples: {len(labels)}")
     print(f"Latent outputs shape: {latent_outputs.shape}")
+    print(f"Number of temporal batches: {len(all_temporal_inputs)}")
 
     # ==============================================================================
     # ANALYSIS 1: Correlation between temporal features and latent dimensions
@@ -545,11 +542,11 @@ def interpret_latent_factors(model_dir="models/catboostrl", top_k=10):
     # For each temporal feature, compute statistics across time
     # (mean, std, min, max, last, count of valid measurements)
 
-    n_samples = len(test_ds)
-    max_len = all_temporal_inputs[0].shape[1]  # Max sequence length
+    n_samples = len(labels)
     n_temporal_feats = len(temporal_feats)
 
     # Aggregate temporal features per sample
+    print(f"\nComputing temporal aggregates for {n_samples} samples...")
     temporal_aggregates = np.zeros((n_samples, n_temporal_feats * 4))  # mean, std, min, max
 
     sample_idx = 0
@@ -565,33 +562,50 @@ def interpret_latent_factors(model_dir="models/catboostrl", top_k=10):
 
                 if len(valid_vals) > 0:
                     temporal_aggregates[sample_idx, f_idx * 4 + 0] = np.mean(valid_vals)
-                    temporal_aggregates[sample_idx, f_idx * 4 + 1] = np.std(valid_vals)
+                    temporal_aggregates[sample_idx, f_idx * 4 + 1] = np.std(valid_vals) if len(valid_vals) > 1 else 0.0
                     temporal_aggregates[sample_idx, f_idx * 4 + 2] = np.min(valid_vals)
                     temporal_aggregates[sample_idx, f_idx * 4 + 3] = np.max(valid_vals)
 
             sample_idx += 1
 
-    # Compute correlation between temporal aggregates and latent dimensions
-    from scipy.stats import pearsonr
+    print(f"Temporal aggregates shape: {temporal_aggregates.shape}")
 
+    # Compute correlation between temporal aggregates and latent dimensions
     # For each latent dimension, find most correlated temporal features
     latent_to_temporal = {}
 
+    print("\nComputing correlations between temporal aggregates and latent dimensions...")
     for z_idx in range(latent_dim):
         z_values = latent_outputs[:, z_idx]
         correlations = []
 
         for f_idx in range(n_temporal_feats):
             # Check correlation with different aggregates
-            corr_mean = abs(pearsonr(temporal_aggregates[:, f_idx * 4 + 0], z_values)[0])
-            corr_std = abs(pearsonr(temporal_aggregates[:, f_idx * 4 + 1], z_values)[0])
-            corr_min = abs(pearsonr(temporal_aggregates[:, f_idx * 4 + 2], z_values)[0])
-            corr_max = abs(pearsonr(temporal_aggregates[:, f_idx * 4 + 3], z_values)[0])
+            try:
+                # Only compute correlation if there's variation in both variables
+                agg_mean = temporal_aggregates[:, f_idx * 4 + 0]
+                agg_std = temporal_aggregates[:, f_idx * 4 + 1]
+                agg_min = temporal_aggregates[:, f_idx * 4 + 2]
+                agg_max = temporal_aggregates[:, f_idx * 4 + 3]
 
-            max_corr = max(corr_mean, corr_std, corr_min, corr_max)
-            agg_type = ['mean', 'std', 'min', 'max'][np.argmax([corr_mean, corr_std, corr_min, corr_max])]
+                corr_mean = abs(pearsonr(agg_mean, z_values)[0]) if np.std(agg_mean) > 1e-6 else 0.0
+                corr_std = abs(pearsonr(agg_std, z_values)[0]) if np.std(agg_std) > 1e-6 else 0.0
+                corr_min = abs(pearsonr(agg_min, z_values)[0]) if np.std(agg_min) > 1e-6 else 0.0
+                corr_max = abs(pearsonr(agg_max, z_values)[0]) if np.std(agg_max) > 1e-6 else 0.0
 
-            correlations.append((temporal_feats[f_idx], max_corr, agg_type))
+                # Handle NaN values
+                corr_mean = 0.0 if np.isnan(corr_mean) else corr_mean
+                corr_std = 0.0 if np.isnan(corr_std) else corr_std
+                corr_min = 0.0 if np.isnan(corr_min) else corr_min
+                corr_max = 0.0 if np.isnan(corr_max) else corr_max
+
+                max_corr = max(corr_mean, corr_std, corr_min, corr_max)
+                agg_type = ['mean', 'std', 'min', 'max'][np.argmax([corr_mean, corr_std, corr_min, corr_max])]
+
+                correlations.append((temporal_feats[f_idx], max_corr, agg_type))
+            except Exception as e:
+                # Skip features that cause errors
+                correlations.append((temporal_feats[f_idx], 0.0, 'n/a'))
 
         # Sort by correlation
         correlations.sort(key=lambda x: x[1], reverse=True)
